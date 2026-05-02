@@ -34,8 +34,8 @@ test = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/tomerbenharush/aitl_lib"
-"Bug Tracker" = "https://github.com/tomerbenharush/aitl_lib/issues"
+Homepage = "https://github.com/benarush/AITL"
+"Bug Tracker" = "https://github.com/benarush/AITL/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -3,7 +3,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/agent-in-the-loop.svg)](https://pypi.org/project/agent-in-the-loop/)
 [![Python](https://img.shields.io/pypi/pyversions/agent-in-the-loop.svg)](https://pypi.org/project/agent-in-the-loop/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![CI](https://github.com/tomerbenharush/aitl_lib/actions/workflows/ci.yml/badge.svg)](https://github.com/tomerbenharush/aitl_lib/actions/workflows/ci.yml)
+[![CI](https://github.com/benarush/AITL/actions/workflows/ci.yml/badge.svg)](https://github.com/benarush/AITL/actions/workflows/ci.yml)
 
 A lightweight Python client for the **Agent In The Loop (AITL)** confidence evaluation API. Send your LLM agent's execution context to the AITL backend and receive a structured confidence score — with optional OpenTelemetry trace ID auto-detection.
 
