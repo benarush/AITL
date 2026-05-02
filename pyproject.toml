@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-in-the-loop"
+version = "0.2.0"
+description = "Client library for Agent In The Loop confidence evaluation API"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Tomer Ben Harush" },
+]
+keywords = ["agent", "llm", "opentelemetry", "confidence", "ai"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "requests>=2.28",
+    "opentelemetry-sdk>=1.20",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/tomerbenharush/aitl_lib"
+"Bug Tracker" = "https://github.com/tomerbenharush/aitl_lib/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

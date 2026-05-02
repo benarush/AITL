@@ -1,0 +1,27 @@
+architecture_simulations/
+playground/
+
+# Virtual environments
+.venv/
+venv/
+
+# Build / packaging artifacts
+build/
+dist/
+*.egg-info/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Environment / secrets
+.env
+.env.*
+
+# macOS
+.DS_Store
+
+# Pypi
+act.png
