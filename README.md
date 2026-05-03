@@ -130,6 +130,35 @@ An OpenTelemetry `SpanProcessor` that captures the trace ID on span start. Regis
 
 ---
 
+## LangChain Callback
+
+`DebugCallbackHandler` is a LangChain callback that prints every lifecycle event (LLM, tool, and chain/graph) with its full payload. It is useful for inspecting what data is available at each step of an agent run.
+
+### Installation
+
+```bash
+pip install "agent-in-the-loop[langchain]"
+```
+
+### Usage
+
+```python
+from agent_in_the_loop.callbacks.langchain_callback import DebugCallbackHandler
+
+handler = DebugCallbackHandler()
+
+# Attach to an LLM
+from langchain_openai import ChatOpenAI
+llm = ChatOpenAI(callbacks=[handler])
+
+# Or attach to a LangGraph / chain invocation
+result = graph.invoke(inputs, config={"callbacks": [handler]})
+```
+
+Each event is printed with a sequential counter, the event name, the `run_id`, and the full payload — making it easy to trace exactly what LangChain passes at every stage.
+
+---
+
 ## Running Tests
 
 ```bash

@@ -32,6 +32,9 @@ dependencies = [
 test = [
     "pytest>=8.0",
 ]
+langchain = [
+    "langchain-core>=0.1",
+]
 
 [project.urls]
 Homepage = "https://github.com/benarush/AITL"
