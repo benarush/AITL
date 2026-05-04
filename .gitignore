@@ -25,3 +25,6 @@ __pycache__/
 
 # Pypi
 act.png
+
+# Pycharm
+.idea/
