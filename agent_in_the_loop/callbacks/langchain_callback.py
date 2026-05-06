@@ -72,6 +72,61 @@ class DebugCallbackHandler(BaseCallbackHandler):
         print(handler.events)   # full trace of the run
     """
 
+    # Maps the LangChain message `type` attribute to a human-readable prefix.
+    _MESSAGE_PREFIXES: dict[str, str] = {
+        "ai": "AI MESSAGE",
+        "human": "HUMAN MESSAGE",
+        "system": "SYSTEM MESSAGE",
+        "tool": "TOOL MESSAGE",
+        "function": "FUNCTION MESSAGE",
+        "chat": "CHAT MESSAGE",
+    }
+
+    @staticmethod
+    def _serialize_message_obj(msg: Any) -> str:
+        """Serialize a single LangChain message object into a labeled plain string.
+
+        Mirrors the logic in ``_serialize_messages`` but for a single value.
+        Falls back to ``str()`` for anything that is not a recognised message object.
+        """
+        if hasattr(msg, "type") and hasattr(msg, "content"):
+            prefix = DebugCallbackHandler._MESSAGE_PREFIXES.get(msg.type.lower(), "MESSAGE")
+            content = msg.content
+            if not isinstance(content, str):
+                try:
+                    content = json.dumps(content)
+                except (TypeError, ValueError):
+                    content = str(content)
+            return f"{prefix}: {content}"
+        return str(msg)
+
+    @staticmethod
+    def _serialize_messages(messages: list[Any]) -> list[str]:
+        """Convert a list of LangChain message objects into labeled plain strings.
+
+        Each item is formatted as ``"<TYPE PREFIX>: <content>"`` so that the
+        result is JSON-serializable and unambiguous about which role produced
+        the content.  Unknown message types fall back to ``"MESSAGE: ..."`` and
+        anything that is not a recognised message object is coerced via ``str()``.
+        """
+        result: list[str] = []
+        for msg in messages:
+            if hasattr(msg, "type") and hasattr(msg, "content"):
+                prefix = DebugCallbackHandler._MESSAGE_PREFIXES.get(
+                    msg.type.lower(), "MESSAGE"
+                )
+                content = msg.content
+                if not isinstance(content, str):
+                    # content can be a list of dicts (e.g. multimodal messages)
+                    try:
+                        content = json.dumps(content)
+                    except (TypeError, ValueError):
+                        content = str(content)
+                result.append(f"{prefix}: {content}")
+            else:
+                result.append(str(msg))
+        return result
+
     def __init__(self) -> None:
         super().__init__()
         self.trace_id: Optional[uuid.UUID] = None
@@ -250,7 +305,7 @@ class DebugCallbackHandler(BaseCallbackHandler):
         parent_run_id: Optional[uuid.UUID] = None,
         **kwargs: Any,
     ) -> None:
-        self._record("on_tool_end", run_id, parent_run_id, output=output)
+        self._record("on_tool_end", run_id, parent_run_id, output=self._serialize_message_obj(output))
 
     def on_tool_error(
         self,
@@ -282,6 +337,9 @@ class DebugCallbackHandler(BaseCallbackHandler):
             _current_callback.set(self)
 
         chain_name = (serialized or {}).get("name") or kwargs.get("name")
+
+        inputs = self._serialize_messages(inputs.get("messages", []))
+
         self._register(run_id, chain_name, "chain")
         self._record(
             "on_chain_start",
@@ -298,6 +356,8 @@ class DebugCallbackHandler(BaseCallbackHandler):
         parent_run_id: Optional[uuid.UUID] = None,
         **kwargs: Any,
     ) -> None:
+        if "messages" in outputs:
+            outputs = {**outputs, "messages": self._serialize_messages(outputs["messages"])}
         self._record("on_chain_end", run_id, parent_run_id, outputs=outputs)
         if run_id == self.trace_id:
             _current_callback.set(None)

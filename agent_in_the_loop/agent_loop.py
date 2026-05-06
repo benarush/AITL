@@ -95,11 +95,15 @@ def evaluate_confidence(
     """
     callback = _current_callback.get()
 
+    if callback is None:
+        raise ValueError(
+            "context could not be resolved. Either pass it explicitly or "
+            "use a DebugCallbackHandler so it can be built automatically."
+        )
+
     # Resolve trace_id: explicit → callback → TraceIdCapture ContextVar
     callback_trace_id = str(callback.trace_id) if (callback and callback.trace_id) else None
     resolved_trace_id = callback_trace_id or _current_trace_id.get()
-
-    graph_context = callback.build_context()
 
     if not resolved_trace_id:
         raise ValueError(
@@ -108,11 +112,7 @@ def evaluate_confidence(
             "your tracer provider."
         )
 
-    if callback is None:
-        raise ValueError(
-            "context could not be resolved. Either pass it explicitly or "
-            "use a DebugCallbackHandler so it can be built automatically."
-        )
+    graph_context = callback.events
 
     base_url = (endpoint or settings.get_env_endpoint()).rstrip("/")
     key = api_key or settings.get_env_api_key()
