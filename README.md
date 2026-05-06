@@ -25,13 +25,13 @@ Requires Python 3.10+.
 from agent_in_the_loop import evaluate_confidence
 
 result = evaluate_confidence(
-    context="The agent searched the web, found 3 sources, and summarised them.",
+    extra_context="The agent searched the web, found 3 sources, and summarised them.",
     trace_id="your-trace-id-here",
     endpoint="https://your-aitl-backend.example.com",
     api_key="your-api-key",
 )
 
-print(result.score)        # int, 1-10
+print(result.score)  # int, 1-10
 print(result.explanation)  # str, human-readable reasoning
 ```
 
@@ -55,7 +55,7 @@ export AGENT_IN_THE_LOOP_API_KEY=your-api-key
 from agent_in_the_loop import evaluate_confidence
 
 result = evaluate_confidence(
-    context="Agent context here...",
+    extra_context="Agent context here...",
     trace_id="your-trace-id",
 )
 ```
@@ -79,7 +79,7 @@ tracer = provider.get_tracer("my-agent")
 with tracer.start_as_current_span("agent-run"):
     # trace_id is captured automatically — no need to pass it
     result = evaluate_confidence(
-        context="Agent finished reasoning step...",
+        extra_context="Agent finished reasoning step...",
     )
     print(result.score)
 ```

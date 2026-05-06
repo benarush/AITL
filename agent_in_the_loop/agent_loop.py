@@ -9,6 +9,7 @@ import requests
 from opentelemetry.sdk.trace import SpanProcessor
 
 from . import settings
+from ._context import _current_callback
 
 if TYPE_CHECKING:
     from opentelemetry.context import Context
@@ -57,8 +58,7 @@ class AgentLoopResult:
 
 
 def evaluate_confidence(
-    context: str,
-    trace_id: Optional[str] = None,
+    extra_context: Optional[str] = None,
     *,
     endpoint: Optional[str] = None,
     api_key: Optional[str] = None,
@@ -66,11 +66,20 @@ def evaluate_confidence(
 ) -> AgentLoopResult:
     """Call the Agent-in-the-Loop backend to get a confidence score.
 
+    Both ``context`` and ``trace_id`` are resolved automatically when a
+    ``DebugCallbackHandler`` was used during the graph run — no manual
+    wiring needed::
+
+        handler = DebugCallbackHandler()
+        graph.invoke(input, config={"callbacks": [handler]})
+        result = evaluate_confidence()   # fully seamless
+
+    Explicit values always take precedence over auto-detected ones.
+
     Args:
-        context: Conversation + graph flow with tool-calling results.
-        trace_id: Trace identifier for this agent run.
-                  Auto-detected when a ``TraceIdCapture`` processor is
-                  registered on the tracer provider.
+        extra_context:  Conversation + graph flow with tool-calling results.
+                  Auto-built from the active ``DebugCallbackHandler``'s
+                  collected events when omitted.
         endpoint: Base URL of the AITL backend.
                   Defaults to ``AGENT_IN_THE_LOOP_ENDPOINT`` env var.
         api_key:  Bearer token for authentication.
@@ -82,13 +91,27 @@ def evaluate_confidence(
 
     Raises:
         requests.HTTPError: On non-2xx responses.
-        ValueError: When api_key is not provided and not set in env.
+        ValueError: When context, trace_id, or api_key cannot be resolved.
     """
-    resolved_trace_id = trace_id or _current_trace_id.get()
+    callback = _current_callback.get()
+
+    # Resolve trace_id: explicit → callback → TraceIdCapture ContextVar
+    callback_trace_id = str(callback.trace_id) if (callback and callback.trace_id) else None
+    resolved_trace_id = callback_trace_id or _current_trace_id.get()
+
+    graph_context = callback.build_context()
+
     if not resolved_trace_id:
         raise ValueError(
-            "trace_id could not be resolved. Either pass it explicitly or "
-            "register a TraceIdCapture processor on your tracer provider."
+            "trace_id could not be resolved. Either pass it explicitly, use a "
+            "DebugCallbackHandler, or register a TraceIdCapture processor on "
+            "your tracer provider."
+        )
+
+    if callback is None:
+        raise ValueError(
+            "context could not be resolved. Either pass it explicitly or "
+            "use a DebugCallbackHandler so it can be built automatically."
         )
 
     base_url = (endpoint or settings.get_env_endpoint()).rstrip("/")
@@ -104,7 +127,7 @@ def evaluate_confidence(
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
-    payload = {"context": context, "trace_id": resolved_trace_id}
+    payload = {"context": graph_context, "trace_id": resolved_trace_id}
 
     response = requests.post(url, json=payload, headers=headers, timeout=timeout)
     response.raise_for_status()

@@ -1,8 +1,11 @@
+import json
 import uuid
 from typing import Any, Optional
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
+
+from .._context import _current_callback
 
 
 def _serialize_message(msg: Any) -> dict[str, Any]:
@@ -22,6 +25,14 @@ def _serialize_message(msg: Any) -> dict[str, Any]:
         result["tool_calls"] = tool_calls
 
     return result
+
+
+def _compact_json(value: Any) -> str:
+    """Render *value* as compact JSON, falling back to repr on failure."""
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)
+    except Exception:
+        return repr(value)
 
 
 def _extract_model_name(serialized: dict[str, Any]) -> Optional[str]:
@@ -267,8 +278,10 @@ class DebugCallbackHandler(BaseCallbackHandler):
         if parent_run_id is None:
             # Root invocation — this run_id is the graph-level trace ID.
             self.trace_id = run_id
+            # Self-register so evaluate_confidence() can pick us up automatically.
+            _current_callback.set(self)
 
-        chain_name = serialized.get("name") or kwargs.get("name")
+        chain_name = (serialized or {}).get("name") or kwargs.get("name")
         self._register(run_id, chain_name, "chain")
         self._record(
             "on_chain_start",
@@ -286,6 +299,8 @@ class DebugCallbackHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         self._record("on_chain_end", run_id, parent_run_id, outputs=outputs)
+        if run_id == self.trace_id:
+            _current_callback.set(None)
 
     def on_chain_error(
         self,
@@ -296,3 +311,66 @@ class DebugCallbackHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         self._record("on_chain_error", run_id, parent_run_id, error=str(error))
+        if run_id == self.trace_id:
+            _current_callback.set(None)
+
+    # ------------------------------------------------------------------
+    # Context serialization
+    # ------------------------------------------------------------------
+
+    def build_context(self) -> str:
+        """Serialize collected events into a structured string for the AITL backend.
+
+        Produces a numbered, step-by-step narrative of the full agent run
+        (LLM calls, tool invocations, chain boundaries) suitable as the
+        ``context`` field of the evaluate_confidence request.
+        """
+        lines: list[str] = [
+            f"=== Agent Run Context ===",
+            f"Trace ID: {self.trace_id}",
+            f"Total steps: {len(self.events)}",
+            "",
+        ]
+
+        for event in self.events:
+            step = event.get("graph_order", "?")
+            event_name = event.get("event", "unknown")
+            node_name = event.get("node_name") or ""
+            node_type = event.get("node_type") or ""
+
+            header = f"[Step {step}] {event_name}"
+            if node_name:
+                header += f"  ({node_type}: {node_name})"
+            lines.append(header)
+
+            # Per-event payload rendering
+            if event_name in ("on_llm_start", "on_chat_model_start"):
+                inp = event.get("input", {})
+                lines.append(f"  input: {_compact_json(inp)}")
+
+            elif event_name == "on_llm_end":
+                out = event.get("output", {})
+                usage = event.get("token_usage")
+                lines.append(f"  output: {_compact_json(out)}")
+                if usage:
+                    lines.append(f"  token_usage: {_compact_json(usage)}")
+
+            elif event_name == "on_tool_start":
+                lines.append(f"  tool: {event.get('tool', '')}")
+                lines.append(f"  input: {_compact_json(event.get('input', {}))}")
+
+            elif event_name == "on_tool_end":
+                lines.append(f"  output: {_compact_json(event.get('output', ''))}")
+
+            elif event_name == "on_chain_start":
+                lines.append(f"  inputs: {_compact_json(event.get('inputs', {}))}")
+
+            elif event_name == "on_chain_end":
+                lines.append(f"  outputs: {_compact_json(event.get('outputs', {}))}")
+
+            elif event_name in ("on_llm_error", "on_tool_error", "on_chain_error"):
+                lines.append(f"  error: {event.get('error', '')}")
+
+            lines.append("")  # blank line between steps
+
+        return "\n".join(lines)

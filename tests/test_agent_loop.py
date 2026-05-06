@@ -187,7 +187,7 @@ class TestEvaluateConfidence:
         mock_post.return_value = _successful_post()
 
         result = evaluate_confidence(
-            context="test context",
+            extra_context="test context",
             trace_id="explicit-id",
             endpoint="http://test:8000",
             api_key="key-123",
@@ -205,7 +205,7 @@ class TestEvaluateConfidence:
         processor.on_start(_make_span(trace_id=42))
 
         evaluate_confidence(
-            context="test context",
+            extra_context="test context",
             endpoint="http://test:8000",
             api_key="key-123",
         )
@@ -216,7 +216,7 @@ class TestEvaluateConfidence:
     def test_raises_when_no_trace_id(self):
         with pytest.raises(ValueError, match="trace_id could not be resolved"):
             evaluate_confidence(
-                context="test",
+                extra_context="test",
                 endpoint="http://test:8000",
                 api_key="key-123",
             )
@@ -228,14 +228,14 @@ class TestEvaluateConfidence:
         mock_settings.ENV_AITL_API_KEY = "AGENT_IN_THE_LOOP_API_KEY"
 
         with pytest.raises(ValueError, match="api_key must be provided"):
-            evaluate_confidence(context="test", trace_id="abc")
+            evaluate_confidence(extra_context="test", trace_id="abc")
 
     @patch("agent_in_the_loop.agent_loop.requests.post")
     def test_returns_dataclass_fields(self, mock_post):
         mock_post.return_value = _successful_post(score=3, explanation="meh")
 
         result = evaluate_confidence(
-            context="ctx",
+            extra_context="ctx",
             trace_id="tid",
             endpoint="http://test:8000",
             api_key="k",
