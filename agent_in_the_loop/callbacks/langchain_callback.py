@@ -50,8 +50,11 @@ def _extract_model_name(serialized: dict[str, Any]) -> Optional[str]:
     return name
 
 
-class DebugCallbackHandler(BaseCallbackHandler):
-    """LangChain callback handler that tracks lifecycle events.
+class _AgentGuardCallback(BaseCallbackHandler):
+    """Internal LangChain callback handler that tracks agent lifecycle events.
+
+    This class is not part of the public API. Use :func:`get_agent_guard` to
+    obtain an instance.
 
     Accumulates all graph events into ``self.events`` as a list of dicts.
     Each dict contains:
@@ -64,12 +67,6 @@ class DebugCallbackHandler(BaseCallbackHandler):
     * ``node_name``    – human-readable name of the node/chain/tool/model
     * ``node_type``    – ``"llm"``, ``"tool"``, or ``"chain"``
     * extra payload fields depending on the event type
-
-    Usage::
-
-        handler = DebugCallbackHandler()
-        graph.invoke(input, config={"callbacks": [handler]})
-        print(handler.events)   # full trace of the run
     """
 
     # Maps the LangChain message `type` attribute to a human-readable prefix.
@@ -90,7 +87,7 @@ class DebugCallbackHandler(BaseCallbackHandler):
         Falls back to ``str()`` for anything that is not a recognised message object.
         """
         if hasattr(msg, "type") and hasattr(msg, "content"):
-            prefix = DebugCallbackHandler._MESSAGE_PREFIXES.get(msg.type.lower(), "MESSAGE")
+            prefix = _AgentGuardCallback._MESSAGE_PREFIXES.get(msg.type.lower(), "MESSAGE")
             content = msg.content
             if not isinstance(content, str):
                 try:
@@ -112,7 +109,7 @@ class DebugCallbackHandler(BaseCallbackHandler):
         result: list[str] = []
         for msg in messages:
             if hasattr(msg, "type") and hasattr(msg, "content"):
-                prefix = DebugCallbackHandler._MESSAGE_PREFIXES.get(
+                prefix = _AgentGuardCallback._MESSAGE_PREFIXES.get(
                     msg.type.lower(), "MESSAGE"
                 )
                 content = msg.content
@@ -127,8 +124,15 @@ class DebugCallbackHandler(BaseCallbackHandler):
                 result.append(str(msg))
         return result
 
-    def __init__(self) -> None:
+    def __init__(self, *, agent_name: str) -> None:
+        if not agent_name or not agent_name.strip():
+            raise ValueError(
+                "agent_name is required. It uniquely identifies this agent graph in the "
+                "AITL backend and is used to track its network profile across runs. "
+                "Use a stable, descriptive name such as 'research-agent' or 'support-bot'."
+            )
         super().__init__()
+        self.agent_name: str = agent_name
         self.trace_id: Optional[uuid.UUID] = None
         self.events: list[dict[str, Any]] = []
         self._step: int = 0
@@ -359,8 +363,10 @@ class DebugCallbackHandler(BaseCallbackHandler):
         if "messages" in outputs:
             outputs = {**outputs, "messages": self._serialize_messages(outputs["messages"])}
         self._record("on_chain_end", run_id, parent_run_id, outputs=outputs)
-        if run_id == self.trace_id:
-            _current_callback.set(None)
+        # Do NOT clear _current_callback here. ContextVar is already scoped per
+        # asyncio Task / thread, so it never leaks across concurrent runs.
+        # Clearing it before graph.invoke() returns would make evaluate_confidence()
+        # fail when called after the graph completes.
 
     def on_chain_error(
         self,
@@ -371,8 +377,6 @@ class DebugCallbackHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         self._record("on_chain_error", run_id, parent_run_id, error=str(error))
-        if run_id == self.trace_id:
-            _current_callback.set(None)
 
     # ------------------------------------------------------------------
     # Context serialization

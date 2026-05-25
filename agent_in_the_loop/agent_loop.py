@@ -14,6 +14,7 @@ from ._context import _current_callback
 if TYPE_CHECKING:
     from opentelemetry.context import Context
     from opentelemetry.sdk.trace import ReadableSpan, Span
+    from .callbacks.langchain_callback import _AgentGuardCallback
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +58,31 @@ class AgentLoopResult:
     score: int
 
 
+def get_agent_guard(agent_name: str) -> "_AgentGuardCallback":
+    """Create a callback handler that identifies this graph to the AITL backend.
+
+    ``agent_name`` must be a stable, unique name for this agent graph within
+    your repository (e.g. ``'research-agent'``, ``'support-bot'``). The backend
+    uses it to look up and maintain the graph's network profile across runs.
+    Different graphs in the same repo must use different names.
+
+    Usage::
+
+        guard = get_agent_guard("research-agent")
+        graph.invoke(input, config={"callbacks": [guard]})
+        result = evaluate_confidence()
+
+    Args:
+        agent_name: Unique, stable name for this agent graph.
+
+    Returns:
+        An internal callback handler bound to the given agent name.
+    """
+    from .callbacks.langchain_callback import _AgentGuardCallback
+    return _AgentGuardCallback(agent_name=agent_name)
+
+
 def evaluate_confidence(
-    extra_context: Optional[str] = None,
     *,
     endpoint: Optional[str] = None,
     api_key: Optional[str] = None,
@@ -66,53 +90,43 @@ def evaluate_confidence(
 ) -> AgentLoopResult:
     """Call the Agent-in-the-Loop backend to get a confidence score.
 
-    Both ``context`` and ``trace_id`` are resolved automatically when a
-    ``DebugCallbackHandler`` was used during the graph run — no manual
-    wiring needed::
+    ``context``, ``trace_id``, and ``agent_name`` are all resolved automatically
+    from the active guard created by :func:`get_agent_guard` — no manual wiring needed::
 
-        handler = DebugCallbackHandler()
-        graph.invoke(input, config={"callbacks": [handler]})
-        result = evaluate_confidence()   # fully seamless
-
-    Explicit values always take precedence over auto-detected ones.
+        guard = get_agent_guard("research-agent")
+        graph.invoke(input, config={"callbacks": [guard]})
+        result = evaluate_confidence()
 
     Args:
-        extra_context:  Conversation + graph flow with tool-calling results.
-                  Auto-built from the active ``DebugCallbackHandler``'s
-                  collected events when omitted.
         endpoint: Base URL of the AITL backend.
-                  Defaults to ``AGENT_IN_THE_LOOP_ENDPOINT`` env var.
+                  Defaults to the ``AGENT_IN_THE_LOOP_ENDPOINT`` env var.
         api_key:  Bearer token for authentication.
-                  Defaults to ``AGENT_IN_THE_LOOP_API_KEY`` env var.
-        timeout:  HTTP request timeout in seconds.
+                  Defaults to the ``AGENT_IN_THE_LOOP_API_KEY`` env var.
+        timeout:  HTTP request timeout in seconds (default 30).
 
     Returns:
-        AgentLoopResult with ``explanation`` and ``score`` (1-10).
+        :class:`AgentLoopResult` with ``explanation`` and ``score`` (1–10).
 
     Raises:
         requests.HTTPError: On non-2xx responses.
-        ValueError: When context, trace_id, or api_key cannot be resolved.
+        ValueError: When the callback handler, trace_id, or api_key cannot be resolved.
     """
     callback = _current_callback.get()
 
     if callback is None:
         raise ValueError(
-            "context could not be resolved. Either pass it explicitly or "
-            "use a DebugCallbackHandler so it can be built automatically."
+            "No active callback handler found. Use get_agent_guard() to create one "
+            "and pass it to graph.invoke() before calling evaluate_confidence()."
         )
 
-    # Resolve trace_id: explicit → callback → TraceIdCapture ContextVar
-    callback_trace_id = str(callback.trace_id) if (callback and callback.trace_id) else None
-    resolved_trace_id = callback_trace_id or _current_trace_id.get()
-
+    resolved_trace_id = (
+        str(callback.trace_id) if callback.trace_id else _current_trace_id.get()
+    )
     if not resolved_trace_id:
         raise ValueError(
-            "trace_id could not be resolved. Either pass it explicitly, use a "
-            "DebugCallbackHandler, or register a TraceIdCapture processor on "
-            "your tracer provider."
+            "trace_id could not be resolved. Use get_agent_guard() during graph.invoke(), "
+            "or register a TraceIdCapture processor on your tracer provider."
         )
-
-    graph_context = callback.events
 
     base_url = (endpoint or settings.get_env_endpoint()).rstrip("/")
     key = api_key or settings.get_env_api_key()
@@ -127,7 +141,11 @@ def evaluate_confidence(
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
-    payload = {"context": graph_context, "trace_id": resolved_trace_id}
+    payload = {
+        "context": callback.events,
+        "trace_id": resolved_trace_id,
+        "agent_name": callback.agent_name,
+    }
 
     response = requests.post(url, json=payload, headers=headers, timeout=timeout)
     response.raise_for_status()
