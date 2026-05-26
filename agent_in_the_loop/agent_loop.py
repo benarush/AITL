@@ -1,55 +1,18 @@
 from __future__ import annotations
 
 import logging
-from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
 import requests
-from opentelemetry.sdk.trace import SpanProcessor
 
 from . import settings
 from ._context import _current_callback
 
 if TYPE_CHECKING:
-    from opentelemetry.context import Context
-    from opentelemetry.sdk.trace import ReadableSpan, Span
     from .callbacks.langchain_callback import _AgentGuardCallback
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Module-level trace capture -- set by TraceIdCapture SpanProcessor
-# ---------------------------------------------------------------------------
-_current_trace_id: ContextVar[Optional[str]] = ContextVar('_current_trace_id', default=None)
-
-
-class TraceIdCapture(SpanProcessor):
-    """Lightweight SpanProcessor that remembers the latest trace_id.
-
-    Usage::
-
-        from agent_in_the_loop import TraceIdCapture
-
-        trace_capture = TraceIdCapture()
-        tracer_provider.add_span_processor(trace_capture)
-
-        # Later – evaluate_confidence() auto-detects the trace_id.
-    """
-
-    def on_start(self, span: Span, parent_context: Optional[Context] = None) -> None:
-        tid = span.get_span_context().trace_id  # type: ignore[union-attr]
-        _current_trace_id.set(format(tid, '032x'))
-
-    def on_end(self, span: ReadableSpan) -> None:
-        pass
-
-    def shutdown(self) -> None:
-        pass
-
-    def force_flush(self, timeout_millis: int = 0) -> bool:
-        return True
 
 
 @dataclass(frozen=True)
@@ -119,14 +82,12 @@ def evaluate_confidence(
             "and pass it to graph.invoke() before calling evaluate_confidence()."
         )
 
-    resolved_trace_id = (
-        str(callback.trace_id) if callback.trace_id else _current_trace_id.get()
-    )
-    if not resolved_trace_id:
+    if not callback.trace_id:
         raise ValueError(
-            "trace_id could not be resolved. Use get_agent_guard() during graph.invoke(), "
-            "or register a TraceIdCapture processor on your tracer provider."
+            "trace_id could not be resolved. Make sure get_agent_guard() is passed to "
+            "graph.invoke() before calling evaluate_confidence()."
         )
+    resolved_trace_id = str(callback.trace_id)
 
     base_url = (endpoint or settings.get_env_endpoint()).rstrip("/")
     key = api_key or settings.get_env_api_key()
