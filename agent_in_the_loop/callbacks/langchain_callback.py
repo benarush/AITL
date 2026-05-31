@@ -27,6 +27,59 @@ def _serialize_message(msg: Any) -> dict[str, Any]:
     return result
 
 
+def _content_to_str(content: Any) -> str:
+    """Convert a message content value to a plain string.
+
+    LangChain message content can be a str, a list of dicts (multimodal),
+    or any other JSON-serializable value for structured outputs.
+    """
+    if isinstance(content, str):
+        return content
+    try:
+        return json.dumps(content, ensure_ascii=False, default=str)
+    except Exception:
+        return str(content)
+
+
+def _extract_llm_input(messages: list[Any]) -> dict[str, Optional[str]]:
+    """Extract structured system/human fields from a list of LangChain messages.
+
+    Returns a dict with:
+    - ``system``: content of the first SystemMessage, or ``None``
+    - ``human``: content of the last HumanMessage, or ``None``
+
+    For multi-turn conversation histories the *last* human turn is used as the
+    active prompt because that is what the LLM is responding to.
+
+    Handles both LangChain ``BaseMessage`` objects (standard) and plain dicts
+    (e.g. when Phoenix auto-instrumentation serialises messages before passing
+    them to the callback).  Also accepts ``"user"`` as a synonym for ``"human"``
+    to cover OpenAI-style role names.
+    """
+    system: Optional[str] = None
+    human: Optional[str] = None
+
+    for msg in messages:
+        if hasattr(msg, "type") and hasattr(msg, "content"):
+            # Standard LangChain BaseMessage object
+            role = str(msg.type).lower()
+            content = _content_to_str(msg.content)
+        elif isinstance(msg, dict):
+            # Serialised dict — may use "role" (OpenAI/Phoenix) or "type" (LangChain)
+            role = str(msg.get("role") or msg.get("type") or "").lower()
+            content = _content_to_str(msg.get("content") or "")
+        else:
+            continue
+
+        if role == "system" and system is None:
+            system = content
+        elif role in ("human", "user"):
+            # "user" is the OpenAI/Phoenix style; keep overwriting so the last wins.
+            human = content
+
+    return {"system": system, "human": human}
+
+
 def _compact_json(value: Any) -> str:
     """Render *value* as compact JSON, falling back to repr on failure."""
     try:
@@ -196,7 +249,7 @@ class _AgentGuardCallback(BaseCallbackHandler):
             run_id,
             parent_run_id,
             model=model,
-            input={"prompts": prompts},
+            input={"system": None, "human": "\n".join(prompts)},
         )
 
     def on_chat_model_start(
@@ -212,15 +265,14 @@ class _AgentGuardCallback(BaseCallbackHandler):
         self._register(run_id, model, "llm")
 
         # messages is list[list[BaseMessage]] — one inner list per prompt batch item.
-        serialized_messages = [
-            [_serialize_message(m) for m in batch] for batch in messages
-        ]
+        # Use the first batch to extract system/human fields.
+        llm_input = _extract_llm_input(messages[0] if messages else [])
         self._record(
             "on_chat_model_start",
             run_id,
             parent_run_id,
             model=model,
-            input={"messages": serialized_messages},
+            input=llm_input,
         )
 
     def on_llm_end(
@@ -231,18 +283,41 @@ class _AgentGuardCallback(BaseCallbackHandler):
         parent_run_id: Optional[uuid.UUID] = None,
         **kwargs: Any,
     ) -> None:
-        # Extract generated texts cleanly instead of dumping the whole dict.
-        output_texts: list[list[str]] = []
-        for batch in response.generations:
-            texts = []
-            for gen in batch:
-                # ChatGeneration has .message; Generation has .text
+        # Pull the text from the first generation of the first batch.
+        # Try multiple attributes in priority order to handle:
+        #   - ChatGeneration (.message.content) — standard LangChain chat models
+        #   - Generation (.text) — plain (non-chat) LLMs
+        #   - Gemini multimodal content (list of parts — serialise to JSON)
+        #   - Dicts produced by Phoenix instrumentation wrapping
+        response_text: str = ""
+        if response.generations:
+            first_batch = response.generations[0]
+            if first_batch:
+                gen = first_batch[0]
+
+                # 1. Try .message.content (ChatGeneration)
                 message = getattr(gen, "message", None)
                 if message is not None:
-                    texts.append(_serialize_message(message))
-                else:
-                    texts.append(gen.text)
-            output_texts.append(texts)
+                    content = getattr(message, "content", None)
+                    if content is not None:
+                        response_text = _content_to_str(content)
+                    else:
+                        # Content is None — fall through to .text
+                        message = None
+
+                # 2. Try .text (plain Generation or ChatGeneration fallback)
+                if not message:
+                    raw_text = getattr(gen, "text", None)
+                    if raw_text is not None:
+                        # .text can be a list when Gemini returns multimodal content
+                        response_text = _content_to_str(raw_text) if not isinstance(raw_text, str) else (raw_text or "")
+
+                # 3. Treat gen itself as a dict (Phoenix serialisation edge case)
+                if not response_text and isinstance(gen, dict):
+                    msg_dict = gen.get("message") or {}
+                    response_text = _content_to_str(
+                        msg_dict.get("content") if isinstance(msg_dict, dict) else gen.get("text", "")
+                    )
 
         token_usage = (response.llm_output or {}).get("token_usage") or (
             response.llm_output or {}
@@ -252,7 +327,7 @@ class _AgentGuardCallback(BaseCallbackHandler):
             "on_llm_end",
             run_id,
             parent_run_id,
-            output={"generations": output_texts},
+            output={"response": response_text},
             token_usage=token_usage,
         )
 
@@ -410,12 +485,15 @@ class _AgentGuardCallback(BaseCallbackHandler):
             # Per-event payload rendering
             if event_name in ("on_llm_start", "on_chat_model_start"):
                 inp = event.get("input", {})
-                lines.append(f"  input: {_compact_json(inp)}")
+                if inp.get("system"):
+                    lines.append(f"  system: {inp['system']}")
+                if inp.get("human"):
+                    lines.append(f"  human: {inp['human']}")
 
             elif event_name == "on_llm_end":
                 out = event.get("output", {})
                 usage = event.get("token_usage")
-                lines.append(f"  output: {_compact_json(out)}")
+                lines.append(f"  response: {out.get('response', '')}")
                 if usage:
                     lines.append(f"  token_usage: {_compact_json(usage)}")
 
