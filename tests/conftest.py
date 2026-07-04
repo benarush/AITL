@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent_in_the_loop._context import _current_callback
-from agent_in_the_loop.callbacks.langchain_callback import DebugCallbackHandler
+from agent_in_the_loop.callbacks.langchain_callback import _AgentGuardCallback
 
 
 @pytest.fixture
@@ -19,12 +19,12 @@ def mock_http_ok() -> MagicMock:
 
 
 @pytest.fixture
-def active_handler() -> DebugCallbackHandler:
-    """A DebugCallbackHandler registered in _current_callback with a fake trace_id.
+def active_handler() -> _AgentGuardCallback:
+    """An _AgentGuardCallback registered in _current_callback with a fake trace_id.
 
     Automatically cleans up the ContextVar after each test via reset().
     """
-    handler = DebugCallbackHandler(agent_name="test-agent")
+    handler = _AgentGuardCallback(agent_name="test-agent")
     handler.trace_id = uuid.uuid4()
     token = _current_callback.set(handler)
     yield handler

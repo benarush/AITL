@@ -47,7 +47,6 @@ def get_agent_guard(agent_name: str) -> "_AgentGuardCallback":
 
 def evaluate_confidence(
     *,
-    endpoint: Optional[str] = None,
     api_key: Optional[str] = None,
     timeout: float = 30.0,
 ) -> AgentLoopResult:
@@ -61,8 +60,6 @@ def evaluate_confidence(
         result = evaluate_confidence()
 
     Args:
-        endpoint: Base URL of the AITL backend.
-                  Defaults to the ``AGENT_IN_THE_LOOP_ENDPOINT`` env var.
         api_key:  Bearer token for authentication.
                   Defaults to the ``AGENT_IN_THE_LOOP_API_KEY`` env var.
         timeout:  HTTP request timeout in seconds (default 30).
@@ -89,7 +86,7 @@ def evaluate_confidence(
         )
     resolved_trace_id = str(callback.trace_id)
 
-    base_url = (endpoint or settings.get_env_endpoint()).rstrip("/")
+    base_url = settings.AITL_ENDPOINT.rstrip("/")
     key = api_key or settings.get_env_api_key()
     if not key:
         raise ValueError(

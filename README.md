@@ -27,7 +27,6 @@ from agent_in_the_loop import evaluate_confidence
 result = evaluate_confidence(
     extra_context="The agent searched the web, found 3 sources, and summarised them.",
     trace_id="your-trace-id-here",
-    endpoint="https://your-aitl-backend.example.com",
     api_key="your-api-key",
 )
 
@@ -39,15 +38,15 @@ print(result.explanation)  # str, human-readable reasoning
 
 ## Environment Variables
 
-Instead of passing `endpoint` and `api_key` on every call, set them as environment variables:
+The SDK always talks to the managed AITL backend at `https://trellar.io` — this is fixed and cannot be overridden via an environment variable or function argument.
+
+Instead of passing `api_key` on every call, set it as an environment variable:
 
 | Variable | Description | Default |
 |---|---|---|
-| `AGENT_IN_THE_LOOP_ENDPOINT` | Base URL of the AITL backend | `http://localhost:6006` |
 | `AGENT_IN_THE_LOOP_API_KEY` | Bearer token for authentication | *(required)* |
 
 ```bash
-export AGENT_IN_THE_LOOP_ENDPOINT=https://your-aitl-backend.example.com
 export AGENT_IN_THE_LOOP_API_KEY=your-api-key
 ```
 
@@ -97,7 +96,6 @@ evaluate_confidence(
     context: str,
     trace_id: str | None = None,
     *,
-    endpoint: str | None = None,
     api_key: str | None = None,
     timeout: float = 30.0,
 ) -> AgentLoopResult
@@ -107,9 +105,10 @@ evaluate_confidence(
 |---|---|---|
 | `context` | `str` | Conversation and graph flow to evaluate |
 | `trace_id` | `str \| None` | Trace ID for the agent run. Auto-detected when `TraceIdCapture` is registered |
-| `endpoint` | `str \| None` | Backend base URL. Falls back to `AGENT_IN_THE_LOOP_ENDPOINT` |
 | `api_key` | `str \| None` | Bearer token. Falls back to `AGENT_IN_THE_LOOP_API_KEY` |
 | `timeout` | `float` | HTTP request timeout in seconds (default `30.0`) |
+
+Requests are always sent to the fixed backend domain (`https://trellar.io`); there is no way for callers to redirect them elsewhere.
 
 **Raises:**
 - `ValueError` — if `trace_id` cannot be resolved or `api_key` is missing
