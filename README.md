@@ -38,7 +38,7 @@ print(result.explanation)  # str, human-readable reasoning
 
 ## Environment Variables
 
-The SDK always talks to the managed AITL backend at `https://trellar.io` — this is fixed and cannot be overridden via an environment variable or function argument.
+The SDK always talks to the managed AITL backend at `https://api.trellar.io` — this is fixed and cannot be overridden via an environment variable or function argument.
 
 Instead of passing `api_key` on every call, set it as an environment variable:
 
@@ -108,7 +108,7 @@ evaluate_confidence(
 | `api_key` | `str \| None` | Bearer token. Falls back to `AGENT_IN_THE_LOOP_API_KEY` |
 | `timeout` | `float` | HTTP request timeout in seconds (default `30.0`) |
 
-Requests are always sent to the fixed backend domain (`https://trellar.io`); there is no way for callers to redirect them elsewhere.
+Requests are always sent to the fixed backend domain (`https://api.trellar.io`); there is no way for callers to redirect them elsewhere.
 
 **Raises:**
 - `ValueError` — if `trace_id` cannot be resolved or `api_key` is missing

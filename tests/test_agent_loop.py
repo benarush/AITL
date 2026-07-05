@@ -32,7 +32,7 @@ class TestEvaluateConfidenceRequest:
         evaluate_confidence(api_key="key-123")
 
         url = mock_post.call_args.args[0]
-        assert url == f"{settings.AITL_ENDPOINT}/agent-gateway/v1/agent-loop"
+        assert url == f"{settings.DEFAULT_ENDPOINT.rstrip('/')}/agent-gateway/v1/agent-loop"
 
     @patch("agent_in_the_loop.agent_loop.requests.post")
     def test_sends_bearer_auth_header(self, mock_post, active_handler):
@@ -106,7 +106,7 @@ class TestEvaluateConfidenceValidation:
 
     @patch("agent_in_the_loop.agent_loop.settings")
     def test_raises_when_no_api_key(self, mock_settings, active_handler):
-        mock_settings.AITL_ENDPOINT = "https://trellar.io"
+        mock_settings.DEFAULT_ENDPOINT = "https://api.trellar.io/"
         mock_settings.get_env_api_key.return_value = None
         mock_settings.ENV_AITL_API_KEY = "AGENT_IN_THE_LOOP_API_KEY"
 

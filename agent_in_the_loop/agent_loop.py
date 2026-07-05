@@ -86,7 +86,7 @@ def evaluate_confidence(
         )
     resolved_trace_id = str(callback.trace_id)
 
-    base_url = settings.AITL_ENDPOINT.rstrip("/")
+    base_url = settings.DEFAULT_ENDPOINT.rstrip("/")
     key = api_key or settings.get_env_api_key()
     if not key:
         raise ValueError(
