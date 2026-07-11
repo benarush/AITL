@@ -217,17 +217,45 @@ class _AgentGuardCallback(BaseCallbackHandler):
     ) -> None:
         node_info = self._run_registry.get(str(run_id), {})
         self.events.append(
-            {
-                "event": event,
-                "graph_order": self._next_step(),
-                "trace_id": str(self.trace_id),
-                "run_id": str(run_id),
-                "parent_run_id": str(parent_run_id) if parent_run_id else None,
-                "node_name": node_info.get("name"),
-                "node_type": node_info.get("type"),
-                **data,
-            }
+            self._to_jsonable(
+                {
+                    "event": event,
+                    "graph_order": self._next_step(),
+                    "trace_id": str(self.trace_id),
+                    "run_id": str(run_id),
+                    "parent_run_id": str(parent_run_id) if parent_run_id else None,
+                    "node_name": node_info.get("name"),
+                    "node_type": node_info.get("type"),
+                    **data,
+                }
+            )
         )
+
+    @staticmethod
+    def _to_jsonable(value: Any) -> Any:
+        """Recursively coerce *value* into something ``json.dumps`` can handle.
+
+        LangChain/LangGraph hand callbacks all sorts of raw objects that are
+        not JSON-safe out of the box — most notably pydantic models (e.g. the
+        return value of ``with_structured_output``) and message objects. This
+        makes sure nothing appended to ``self.events`` can ever break the
+        ``evaluate_confidence()`` HTTP call downstream.
+        """
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if hasattr(value, "type") and hasattr(value, "content"):
+            return _AgentGuardCallback._serialize_message_obj(value)
+        if hasattr(value, "model_dump"):
+            return _AgentGuardCallback._to_jsonable(value.model_dump(mode="json"))
+        if isinstance(value, dict):
+            return {k: _AgentGuardCallback._to_jsonable(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_AgentGuardCallback._to_jsonable(v) for v in value]
+        try:
+            json.dumps(value)
+            return value
+        except (TypeError, ValueError):
+            return str(value)
 
     # ------------------------------------------------------------------
     # LLM events
@@ -417,14 +445,24 @@ class _AgentGuardCallback(BaseCallbackHandler):
 
         chain_name = (serialized or {}).get("name") or kwargs.get("name")
 
-        inputs = self._serialize_messages(inputs.get("messages", []))
+        # `inputs` is usually the graph/node state dict, but LangChain also
+        # fires this event for internal sub-runnables (e.g. ToolNode) whose
+        # raw input is a bare list of messages or a single message object.
+        # The backend's schema requires `inputs` to always be a list, so
+        # every branch below normalizes to one instead of a bare string/dict.
+        if isinstance(inputs, dict) and "messages" in inputs:
+            safe_inputs = self._serialize_messages(inputs["messages"])
+        elif isinstance(inputs, list):
+            safe_inputs = self._serialize_messages(inputs)
+        else:
+            safe_inputs = [self._to_jsonable(inputs)]
 
         self._register(run_id, chain_name, "chain")
         self._record(
             "on_chain_start",
             run_id,
             parent_run_id,
-            inputs=inputs,
+            inputs=safe_inputs,
         )
 
     def on_chain_end(
@@ -435,9 +473,11 @@ class _AgentGuardCallback(BaseCallbackHandler):
         parent_run_id: Optional[uuid.UUID] = None,
         **kwargs: Any,
     ) -> None:
-        if "messages" in outputs:
+        # See on_chain_start — `outputs` is not always a dict (e.g. the raw
+        # pydantic model returned by a `with_structured_output` sub-chain).
+        if isinstance(outputs, dict) and "messages" in outputs:
             outputs = {**outputs, "messages": self._serialize_messages(outputs["messages"])}
-        self._record("on_chain_end", run_id, parent_run_id, outputs=outputs)
+        self._record("on_chain_end", run_id, parent_run_id, outputs=self._to_jsonable(outputs))
         # Do NOT clear _current_callback here. ContextVar is already scoped per
         # asyncio Task / thread, so it never leaks across concurrent runs.
         # Clearing it before graph.invoke() returns would make evaluate_confidence()
