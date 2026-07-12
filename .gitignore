@@ -1,5 +1,6 @@
 architecture_simulations/
 playground/
+orchestrations_examples/
 
 # Virtual environments
 .venv/
@@ -25,3 +26,6 @@ __pycache__/
 
 # Pypi
 act.png
+
+# Pycharm
+.idea/

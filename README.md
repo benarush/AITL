@@ -25,13 +25,12 @@ Requires Python 3.10+.
 from agent_in_the_loop import evaluate_confidence
 
 result = evaluate_confidence(
-    context="The agent searched the web, found 3 sources, and summarised them.",
+    extra_context="The agent searched the web, found 3 sources, and summarised them.",
     trace_id="your-trace-id-here",
-    endpoint="https://your-aitl-backend.example.com",
     api_key="your-api-key",
 )
 
-print(result.score)        # int, 1-10
+print(result.score)  # int, 1-10
 print(result.explanation)  # str, human-readable reasoning
 ```
 
@@ -39,15 +38,15 @@ print(result.explanation)  # str, human-readable reasoning
 
 ## Environment Variables
 
-Instead of passing `endpoint` and `api_key` on every call, set them as environment variables:
+The SDK always talks to the managed AITL backend at `https://api.trellar.io` — this is fixed and cannot be overridden via an environment variable or function argument.
+
+Instead of passing `api_key` on every call, set it as an environment variable:
 
 | Variable | Description | Default |
 |---|---|---|
-| `AGENT_IN_THE_LOOP_ENDPOINT` | Base URL of the AITL backend | `http://localhost:6006` |
 | `AGENT_IN_THE_LOOP_API_KEY` | Bearer token for authentication | *(required)* |
 
 ```bash
-export AGENT_IN_THE_LOOP_ENDPOINT=https://your-aitl-backend.example.com
 export AGENT_IN_THE_LOOP_API_KEY=your-api-key
 ```
 
@@ -55,7 +54,7 @@ export AGENT_IN_THE_LOOP_API_KEY=your-api-key
 from agent_in_the_loop import evaluate_confidence
 
 result = evaluate_confidence(
-    context="Agent context here...",
+    extra_context="Agent context here...",
     trace_id="your-trace-id",
 )
 ```
@@ -79,7 +78,7 @@ tracer = provider.get_tracer("my-agent")
 with tracer.start_as_current_span("agent-run"):
     # trace_id is captured automatically — no need to pass it
     result = evaluate_confidence(
-        context="Agent finished reasoning step...",
+        extra_context="Agent finished reasoning step...",
     )
     print(result.score)
 ```
@@ -97,7 +96,6 @@ evaluate_confidence(
     context: str,
     trace_id: str | None = None,
     *,
-    endpoint: str | None = None,
     api_key: str | None = None,
     timeout: float = 30.0,
 ) -> AgentLoopResult
@@ -107,9 +105,10 @@ evaluate_confidence(
 |---|---|---|
 | `context` | `str` | Conversation and graph flow to evaluate |
 | `trace_id` | `str \| None` | Trace ID for the agent run. Auto-detected when `TraceIdCapture` is registered |
-| `endpoint` | `str \| None` | Backend base URL. Falls back to `AGENT_IN_THE_LOOP_ENDPOINT` |
 | `api_key` | `str \| None` | Bearer token. Falls back to `AGENT_IN_THE_LOOP_API_KEY` |
 | `timeout` | `float` | HTTP request timeout in seconds (default `30.0`) |
+
+Requests are always sent to the fixed backend domain (`https://api.trellar.io`); there is no way for callers to redirect them elsewhere.
 
 **Raises:**
 - `ValueError` — if `trace_id` cannot be resolved or `api_key` is missing
@@ -127,6 +126,35 @@ A frozen dataclass with two fields:
 ### `TraceIdCapture`
 
 An OpenTelemetry `SpanProcessor` that captures the trace ID on span start. Register it with your `TracerProvider` as shown above.
+
+---
+
+## LangChain Callback
+
+`DebugCallbackHandler` is a LangChain callback that prints every lifecycle event (LLM, tool, and chain/graph) with its full payload. It is useful for inspecting what data is available at each step of an agent run.
+
+### Installation
+
+```bash
+pip install "agent-in-the-loop[langchain]"
+```
+
+### Usage
+
+```python
+from agent_in_the_loop.callbacks.langchain_callback import DebugCallbackHandler
+
+handler = DebugCallbackHandler()
+
+# Attach to an LLM
+from langchain_openai import ChatOpenAI
+llm = ChatOpenAI(callbacks=[handler])
+
+# Or attach to a LangGraph / chain invocation
+result = graph.invoke(inputs, config={"callbacks": [handler]})
+```
+
+Each event is printed with a sequential counter, the event name, the `run_id`, and the full payload — making it easy to trace exactly what LangChain passes at every stage.
 
 ---
 
