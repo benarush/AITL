@@ -191,6 +191,11 @@ class _AgentGuardCallback(BaseCallbackHandler):
         self._step: int = 0
         # run_id (str) -> {"name": str, "type": str}
         self._run_registry: dict[str, dict[str, Any]] = {}
+        # LLM events that requested tool calls and are still awaiting the
+        # corresponding tool outputs. Each entry:
+        #   {"event": <recorded event dict>, "parent_run_id": str | None,
+        #    "remaining_tools": [tool names...]}
+        self._pending_llm_tool_calls: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -318,6 +323,7 @@ class _AgentGuardCallback(BaseCallbackHandler):
         #   - Gemini multimodal content (list of parts — serialise to JSON)
         #   - Dicts produced by Phoenix instrumentation wrapping
         response_text: str = ""
+        tool_calls: list[Any] = []
         if response.generations:
             first_batch = response.generations[0]
             if first_batch:
@@ -326,6 +332,7 @@ class _AgentGuardCallback(BaseCallbackHandler):
                 # 1. Try .message.content (ChatGeneration)
                 message = getattr(gen, "message", None)
                 if message is not None:
+                    tool_calls = getattr(message, "tool_calls", None) or []
                     content = getattr(message, "content", None)
                     if content is not None:
                         response_text = _content_to_str(content)
@@ -343,13 +350,28 @@ class _AgentGuardCallback(BaseCallbackHandler):
                 # 3. Treat gen itself as a dict (Phoenix serialisation edge case)
                 if not response_text and isinstance(gen, dict):
                     msg_dict = gen.get("message") or {}
-                    response_text = _content_to_str(
-                        msg_dict.get("content") if isinstance(msg_dict, dict) else gen.get("text", "")
-                    )
+                    if isinstance(msg_dict, dict):
+                        response_text = _content_to_str(msg_dict.get("content"))
+                        if not tool_calls:
+                            tool_calls = msg_dict.get("tool_calls") or []
+                    else:
+                        response_text = _content_to_str(gen.get("text", ""))
 
         token_usage = (response.llm_output or {}).get("token_usage") or (
             response.llm_output or {}
         ).get("usage")
+
+        # Fold tool calls into the response text so the payload keeps its
+        # original shape ({"response": <str>}). The matching tool results are
+        # appended retroactively by on_tool_end once each tool finishes.
+        if tool_calls:
+            parts = [response_text] if response_text else []
+            for tc in tool_calls:
+                if isinstance(tc, dict):
+                    parts.append(
+                        f"TOOL CALL: {tc.get('name')}(args={_compact_json(tc.get('args'))})"
+                    )
+            response_text = "\n".join(parts)
 
         self._record(
             "on_llm_end",
@@ -358,6 +380,19 @@ class _AgentGuardCallback(BaseCallbackHandler):
             output={"response": response_text},
             token_usage=token_usage,
         )
+
+        if tool_calls:
+            # _record appends a jsonable copy; keep a reference to that copy so
+            # on_tool_end can enrich it in place before the payload is built.
+            self._pending_llm_tool_calls.append(
+                {
+                    "event": self.events[-1],
+                    "parent_run_id": str(parent_run_id) if parent_run_id else None,
+                    "remaining_tools": [
+                        tc.get("name") for tc in tool_calls if isinstance(tc, dict)
+                    ],
+                }
+            )
 
     def on_llm_error(
         self,
@@ -412,7 +447,50 @@ class _AgentGuardCallback(BaseCallbackHandler):
         parent_run_id: Optional[uuid.UUID] = None,
         **kwargs: Any,
     ) -> None:
-        self._record("on_tool_end", run_id, parent_run_id, output=self._serialize_message_obj(output))
+        serialized_output = self._serialize_message_obj(output)
+        self._record("on_tool_end", run_id, parent_run_id, output=serialized_output)
+        tool_name = self._run_registry.get(str(run_id), {}).get("name")
+        self._attach_tool_response_to_llm(tool_name, serialized_output, parent_run_id)
+
+    def _attach_tool_response_to_llm(
+        self,
+        tool_name: Optional[str],
+        serialized_output: str,
+        parent_run_id: Optional[uuid.UUID],
+    ) -> None:
+        """Retroactively attach a finished tool's output to the LLM event that
+        requested it, so the LLM's recorded output is never just an empty string.
+
+        Matching strategy (most recent entries first):
+        1. A pending LLM event sharing the same ``parent_run_id`` (the LLM and
+           the tool live in the same chain/node — direct-invocation pattern).
+        2. Any pending LLM event still awaiting this tool name (covers
+           ToolNode/react-agent graphs where the tool runs under a different
+           parent chain).
+        """
+        if not tool_name or not self._pending_llm_tool_calls:
+            return
+
+        parent_id = str(parent_run_id) if parent_run_id else None
+        match: Optional[dict[str, Any]] = None
+        for entry in reversed(self._pending_llm_tool_calls):
+            if tool_name not in entry["remaining_tools"]:
+                continue
+            if entry["parent_run_id"] == parent_id:
+                match = entry
+                break
+            if match is None:
+                match = entry
+
+        if match is None:
+            return
+
+        match["event"]["output"]["response"] += (
+            f"\nTOOL RESPONSE [{tool_name}]: {serialized_output}"
+        )
+        match["remaining_tools"].remove(tool_name)
+        if not match["remaining_tools"]:
+            self._pending_llm_tool_calls.remove(match)
 
     def on_tool_error(
         self,
