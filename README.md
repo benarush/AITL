@@ -5,7 +5,20 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/benarush/AITL/actions/workflows/ci.yml/badge.svg)](https://github.com/benarush/AITL/actions/workflows/ci.yml)
 
-A lightweight Python client for the **Agent In The Loop (AITL)** confidence evaluation API. Attach a callback to your LangChain / LangGraph run, then get a structured confidence score for the whole agent run — no manual context or trace-ID wiring required.
+A lightweight Python client for the **Agent In The Loop (AITL)** confidence evaluation API. Attach a callback to your LangChain / LangGraph run, then call `evaluate_confidence()` when you want a score. Context, trace ID, and agent name are picked up automatically — no manual wiring.
+
+This library cannot be used without an API key from [trellar.io](https://trellar.io).
+
+---
+
+## Create an account and API key
+
+[trellar.io](https://trellar.io) is the only place that issues API keys for this library. Create an account there, then generate an API key from the dashboard. Without that key, `evaluate_confidence()` cannot authenticate and the client will not work.
+
+Then pass the key into the SDK (see [Environment Variables](#environment-variables)):
+
+- `evaluate_confidence(api_key="...")`, or
+- `AGENT_IN_THE_LOOP_API_KEY` in the environment
 
 ---
 
@@ -28,15 +41,44 @@ from agent_in_the_loop import get_agent_guard, evaluate_confidence
 # backend uses it to track the graph's network profile across runs.
 guard = get_agent_guard("research-agent")
 
-# Attach the guard to your LangGraph / LangChain invocation
 graph.invoke(inputs, config={"callbacks": [guard]})
 
-# context, trace_id, and agent_name are all picked up automatically from
-# the guard above — nothing else to pass in.
-result = evaluate_confidence(api_key="your-api-key")
-
+# context, trace_id, and agent_name are picked up from the guard
+result = evaluate_confidence()
 print(result.score)        # int, 1-10
 print(result.explanation)  # str, human-readable reasoning
+```
+
+---
+
+## Where to call `evaluate_confidence`
+
+Call it from a graph node (or after `invoke()`), at the point in the run you want scored. The payload is the events captured **so far** — later nodes are not included.
+
+There are two ways to use the result:
+
+### 1. Gate — validate before the graph continues
+
+Put the call on an edge you do not want the graph to cross until AITL has scored the run. Use `result.score` / `result.explanation` to decide whether to proceed or stop.
+
+```python
+def confidence_gate(state):
+    result = evaluate_confidence()
+    if result.score < 7:
+        return {**state, "halt": True, "reason": result.explanation}
+    return {**state, "halt": False}
+```
+
+Wire that node in front of the next step, and only continue when the score is acceptable.
+
+### 2. Observe — send a validation, do not restrict the graph
+
+Put the call anywhere you want a score recorded (a node, or after `invoke()`). Store or log `result` if you want it; do not branch on it. The graph continues either way.
+
+```python
+def report_confidence(state):
+    result = evaluate_confidence()
+    return {**state, "confidence_score": result.score, "confidence_explanation": result.explanation}
 ```
 
 ---
@@ -45,7 +87,7 @@ print(result.explanation)  # str, human-readable reasoning
 
 The SDK always talks to the managed AITL backend at `https://api.trellar.io` — this is fixed and cannot be overridden via an environment variable or function argument.
 
-Instead of passing `api_key` on every call, set it as an environment variable:
+The API key itself is created only at [trellar.io](https://trellar.io). Once you have it, you can pass it to `evaluate_confidence(api_key=...)` or set it as an environment variable so you do not pass it on every call:
 
 | Variable | Description | Default |
 |---|---|---|
@@ -56,27 +98,8 @@ export AGENT_IN_THE_LOOP_API_KEY=your-api-key
 ```
 
 ```python
-from agent_in_the_loop import get_agent_guard, evaluate_confidence
-
-guard = get_agent_guard("research-agent")
-graph.invoke(inputs, config={"callbacks": [guard]})
-
-result = evaluate_confidence()
+result = evaluate_confidence()  # api_key read from the env var
 ```
-
----
-
-## How It Works
-
-`get_agent_guard(agent_name)` returns a LangChain callback handler that:
-
-- Records every LLM, tool, and chain/graph lifecycle event fired during the run (`on_llm_start`, `on_tool_end`, `on_chain_start`, etc.), in order.
-- Captures the root run's `run_id` as the `trace_id` for the whole graph.
-- Registers itself in a `ContextVar` as the "active" guard for the current thread/async task, so `evaluate_confidence()` can find it automatically — no need to pass it around.
-
-Once the graph run finishes, calling `evaluate_confidence()` sends the accumulated events, trace ID, and agent name to the AITL backend and returns a confidence score.
-
-Different graphs in the same codebase must use different `agent_name` values.
 
 ---
 
@@ -112,7 +135,7 @@ evaluate_confidence(
 | `api_key` | `str \| None` | Bearer token. Falls back to `AGENT_IN_THE_LOOP_API_KEY` |
 | `timeout` | `float` | HTTP request timeout in seconds (default `30.0`) |
 
-`context`, `trace_id`, and `agent_name` are all resolved automatically from the active guard created by `get_agent_guard` — there is no way to pass them manually. Requests are always sent to the fixed backend domain (`https://api.trellar.io`); there is no way for callers to redirect them elsewhere.
+`context`, `trace_id`, and `agent_name` are resolved automatically from the active guard created by `get_agent_guard` — there is no way to pass them manually. Requests always go to `https://api.trellar.io`; callers cannot redirect them.
 
 **Raises:**
 - `ValueError` — if no active guard is found, its `trace_id` cannot be resolved, or `api_key` is missing
@@ -127,27 +150,8 @@ A frozen dataclass with two fields:
 | `score` | `int` | Confidence score from 1 (low) to 10 (high) |
 | `explanation` | `str` | Human-readable explanation of the score |
 
----
-
-## Running Tests
-
-```bash
-pip install -e ".[test]"
-pytest
-```
 
 ---
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/my-feature`)
-3. Commit your changes (`git commit -m "Add my feature"`)
-4. Push to the branch (`git push origin feature/my-feature`)
-5. Open a Pull Request
-
----
-
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.
