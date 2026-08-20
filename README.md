@@ -108,17 +108,43 @@ result = evaluate_confidence()  # api_key read from the env var
 ### `get_agent_guard`
 
 ```python
-get_agent_guard(agent_name: str) -> BaseCallbackHandler
+get_agent_guard(
+    agent_name: str,
+    observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+) -> BaseCallbackHandler
 ```
 
 | Parameter | Type | Description |
 |---|---|---|
 | `agent_name` | `str` | Stable, unique name identifying this agent graph (e.g. `"research-agent"`) |
+| `observability_mode` | `ObservabilityMode` | Controls whether `evaluate_confidence()` is auto-triggered when the graph run finishes. Default `ObservabilityMode.NONE` (no auto-trigger). |
 
 Returns a LangChain callback handler bound to `agent_name`. Pass it to `graph.invoke(..., config={"callbacks": [guard]})`.
 
 **Raises:**
 - `ValueError` — if `agent_name` is empty or blank
+
+#### `ObservabilityMode`
+
+Controls whether the guard automatically calls `evaluate_confidence()` for you when the graph run finishes (the root `graph.invoke()` call completes), so you don't have to add a manual call yourself.
+
+| Value | Behavior |
+|---|---|
+| `ObservabilityMode.NONE` | Never auto-call. Default; identical to not passing `observability_mode` at all. |
+| `ObservabilityMode.ALWAYS` | Always call `evaluate_confidence()` when the run finishes. |
+| `ObservabilityMode.IF_NOT_EVALUATED` | Call `evaluate_confidence()` when the run finishes only if it was not already successfully called earlier in the run (e.g. from a gate node). |
+
+```python
+from agent_in_the_loop import get_agent_guard, ObservabilityMode
+
+guard = get_agent_guard("research-agent", ObservabilityMode.IF_NOT_EVALUATED)
+graph.invoke(inputs, config={"callbacks": [guard]})
+# evaluate_confidence() has already run automatically if no node called it.
+```
+
+Auto-triggered calls never raise: any error (missing API key, HTTP error, `NetworkHaltedError`, etc.) is caught and logged instead of propagating out of `graph.invoke()`. A manual call to `evaluate_confidence()` still raises normally.
+
+Requests triggered this way are marked in the payload sent to the backend with `observability_call: true` (`false` for a normal, manually-invoked call), so the backend can distinguish automatic observability calls from explicit ones.
 
 ### `evaluate_confidence`
 

@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 from typing import Any, Optional
 
@@ -6,6 +7,9 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 
 from .._context import _current_callback
+from ..agent_loop import ObservabilityMode
+
+logger = logging.getLogger(__name__)
 
 
 def _serialize_message(msg: Any) -> dict[str, Any]:
@@ -110,6 +114,9 @@ class _AgentGuardCallback(BaseCallbackHandler):
     obtain an instance.
 
     Accumulates all graph events into ``self.events`` as a list of dicts.
+    State is reset at the start of each top-level ``graph.invoke()`` call
+    (detected via ``parent_run_id is None``), so reusing one instance across
+    multiple invocations does not leak prior-run events into later payloads.
     Each dict contains:
 
     * ``event``        – callback name (e.g. ``on_chat_model_start``)
@@ -177,7 +184,12 @@ class _AgentGuardCallback(BaseCallbackHandler):
                 result.append(str(msg))
         return result
 
-    def __init__(self, *, agent_name: str) -> None:
+    def __init__(
+        self,
+        *,
+        agent_name: str,
+        observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+    ) -> None:
         if not agent_name or not agent_name.strip():
             raise ValueError(
                 "agent_name is required. It uniquely identifies this agent graph in the "
@@ -186,9 +198,13 @@ class _AgentGuardCallback(BaseCallbackHandler):
             )
         super().__init__()
         self.agent_name: str = agent_name
+        self.observability_mode: ObservabilityMode = ObservabilityMode(observability_mode)
         self.trace_id: Optional[uuid.UUID] = None
         self.events: list[dict[str, Any]] = []
         self._step: int = 0
+        # Whether evaluate_confidence() has already succeeded during this run;
+        # reset per top-level invocation alongside the other run state below.
+        self._evaluated: bool = False
         # run_id (str) -> {"name": str, "type": str}
         self._run_registry: dict[str, dict[str, Any]] = {}
         # LLM events that requested tool calls and are still awaiting the
@@ -518,6 +534,15 @@ class _AgentGuardCallback(BaseCallbackHandler):
         if parent_run_id is None:
             # Root invocation — this run_id is the graph-level trace ID.
             self.trace_id = run_id
+            # Guard against reused instances: if this handler is passed into more
+            # than one top-level graph.invoke() (sequentially), drop state from
+            # the previous run instead of letting it accumulate unbounded and
+            # leaking into this run's evaluate_confidence() payload.
+            self.events = []
+            self._step = 0
+            self._run_registry = {}
+            self._pending_llm_tool_calls = []
+            self._evaluated = False
             # Self-register so evaluate_confidence() can pick us up automatically.
             _current_callback.set(self)
 
@@ -560,6 +585,25 @@ class _AgentGuardCallback(BaseCallbackHandler):
         # asyncio Task / thread, so it never leaks across concurrent runs.
         # Clearing it before graph.invoke() returns would make evaluate_confidence()
         # fail when called after the graph completes.
+        if parent_run_id is None:
+            # Root run ending — the whole graph flow has reached its end.
+            self._maybe_auto_evaluate()
+
+    def _maybe_auto_evaluate(self) -> None:
+        """Auto-trigger evaluate_confidence() per self.observability_mode.
+
+        Errors are caught and logged, never raised, so a passive observability
+        call can never crash the graph.
+        """
+        if self.observability_mode is ObservabilityMode.NONE:
+            return
+        if self.observability_mode is ObservabilityMode.IF_NOT_EVALUATED and self._evaluated:
+            return
+        from ..agent_loop import evaluate_confidence
+        try:
+            evaluate_confidence(_observability_call=True)
+        except Exception:
+            logger.warning("Auto-triggered evaluate_confidence() failed", exc_info=True)
 
     def on_chain_error(
         self,

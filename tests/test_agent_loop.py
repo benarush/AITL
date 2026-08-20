@@ -11,11 +11,21 @@ from agent_in_the_loop.agent_loop import AgentLoopResult, evaluate_confidence
 from agent_in_the_loop._context import _current_callback
 
 
-def _successful_post(score: int = 8, explanation: str = "looks good"):
+def _successful_post(
+    score: int = 8,
+    explanation: str = "looks good",
+    decision_identifier: str = "decision-1",
+    should_stop_network: bool = False,
+):
     """Return a mock requests.post response with a JSON body."""
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = {"score": score, "explanation": explanation}
+    resp.json.return_value = {
+        "score": score,
+        "explanation": explanation,
+        "decision_identifier": decision_identifier,
+        "should_stop_network": should_stop_network,
+    }
     resp.raise_for_status = MagicMock()
     return resp
 
