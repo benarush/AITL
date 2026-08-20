@@ -13,7 +13,12 @@ from agent_in_the_loop.callbacks.langchain_callback import _AgentGuardCallback
 def mock_http_ok() -> MagicMock:
     """A successful requests.post response (score=8)."""
     resp = MagicMock()
-    resp.json.return_value = {"score": 8, "explanation": "looks good"}
+    resp.json.return_value = {
+        "score": 8,
+        "explanation": "looks good",
+        "decision_identifier": "decision-1",
+        "should_stop_network": False,
+    }
     resp.raise_for_status = MagicMock()
     return resp
 
