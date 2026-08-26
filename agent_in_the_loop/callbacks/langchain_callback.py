@@ -560,12 +560,21 @@ class _AgentGuardCallback(BaseCallbackHandler):
         else:
             safe_inputs = [self._to_jsonable(inputs)]
 
+        # LangGraph stamps its own superstep number onto the RunnableConfig
+        # metadata for each Pregel node task (see langgraph/pregel/_algo.py).
+        # Nodes sharing the same langgraph_step ran in the same superstep —
+        # i.e. in parallel — which lets the backend distinguish true fan-out
+        # branches from a sequential chain. None for non-LangGraph callers.
+        metadata = kwargs.get("metadata") or {}
+        langgraph_step = metadata.get("langgraph_step")
+
         self._register(run_id, chain_name, "chain")
         self._record(
             "on_chain_start",
             run_id,
             parent_run_id,
             inputs=safe_inputs,
+            langgraph_step=langgraph_step,
         )
 
     def on_chain_end(
