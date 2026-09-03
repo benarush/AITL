@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_in_the_loop._context import _current_callback
-from agent_in_the_loop.callbacks.langchain_callback import _AgentGuardCallback
+from trellar._context import _current_callback
+from trellar.callbacks.langchain_callback import _AgentGuardCallback
 
 
 @pytest.fixture

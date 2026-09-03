@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from agent_in_the_loop import settings
-from agent_in_the_loop.agent_loop import AgentLoopResult, evaluate_confidence
-from agent_in_the_loop._context import _current_callback
+from trellar import settings
+from trellar.agent_loop import AgentLoopResult, evaluate_confidence
+from trellar._context import _current_callback
 
 
 def _successful_post(
@@ -35,7 +35,7 @@ def _successful_post(
 # ---------------------------------------------------------------------------
 
 class TestEvaluateConfidenceRequest:
-    @patch("agent_in_the_loop.agent_loop.requests.post")
+    @patch("trellar.agent_loop.requests.post")
     def test_posts_to_fixed_endpoint(self, mock_post, active_handler):
         mock_post.return_value = _successful_post()
 
@@ -44,7 +44,7 @@ class TestEvaluateConfidenceRequest:
         url = mock_post.call_args.args[0]
         assert url == f"{settings.DEFAULT_ENDPOINT.rstrip('/')}/agent-gateway/v1/agent-loop"
 
-    @patch("agent_in_the_loop.agent_loop.requests.post")
+    @patch("trellar.agent_loop.requests.post")
     def test_sends_bearer_auth_header(self, mock_post, active_handler):
         mock_post.return_value = _successful_post()
 
@@ -53,17 +53,17 @@ class TestEvaluateConfidenceRequest:
         headers = mock_post.call_args.kwargs["headers"]
         assert headers["Authorization"] == "Bearer key-123"
 
-    @patch("agent_in_the_loop.agent_loop.requests.post")
+    @patch("trellar.agent_loop.requests.post")
     def test_falls_back_to_env_api_key(self, mock_post, active_handler, monkeypatch):
         mock_post.return_value = _successful_post()
-        monkeypatch.setenv(settings.ENV_AITL_API_KEY, "env-key")
+        monkeypatch.setenv(settings.ENV_TRELLAR_API_KEY, "env-key")
 
         evaluate_confidence()
 
         headers = mock_post.call_args.kwargs["headers"]
         assert headers["Authorization"] == "Bearer env-key"
 
-    @patch("agent_in_the_loop.agent_loop.requests.post")
+    @patch("trellar.agent_loop.requests.post")
     def test_sends_context_events_from_active_handler(self, mock_post, active_handler):
         mock_post.return_value = _successful_post()
         active_handler.events.append({"event": "on_llm_start"})
@@ -73,7 +73,7 @@ class TestEvaluateConfidenceRequest:
         payload = mock_post.call_args.kwargs["json"]
         assert payload["context"] == active_handler.events
 
-    @patch("agent_in_the_loop.agent_loop.requests.post")
+    @patch("trellar.agent_loop.requests.post")
     def test_default_timeout_is_30_seconds(self, mock_post, active_handler):
         mock_post.return_value = _successful_post()
 
@@ -81,7 +81,7 @@ class TestEvaluateConfidenceRequest:
 
         assert mock_post.call_args.kwargs["timeout"] == 30.0
 
-    @patch("agent_in_the_loop.agent_loop.requests.post")
+    @patch("trellar.agent_loop.requests.post")
     def test_custom_timeout_is_forwarded(self, mock_post, active_handler):
         mock_post.return_value = _successful_post()
 
@@ -104,7 +104,7 @@ class TestEvaluateConfidenceValidation:
             _current_callback.reset(token)
 
     def test_raises_when_trace_id_not_resolved(self):
-        from agent_in_the_loop.callbacks.langchain_callback import _AgentGuardCallback
+        from trellar.callbacks.langchain_callback import _AgentGuardCallback
 
         handler = _AgentGuardCallback(agent_name="test-agent")
         token = _current_callback.set(handler)
@@ -114,11 +114,11 @@ class TestEvaluateConfidenceValidation:
         finally:
             _current_callback.reset(token)
 
-    @patch("agent_in_the_loop.agent_loop.settings")
+    @patch("trellar.agent_loop.settings")
     def test_raises_when_no_api_key(self, mock_settings, active_handler):
         mock_settings.DEFAULT_ENDPOINT = "https://api.trellar.io/"
         mock_settings.get_env_api_key.return_value = None
-        mock_settings.ENV_AITL_API_KEY = "AGENT_IN_THE_LOOP_API_KEY"
+        mock_settings.ENV_TRELLAR_API_KEY = "TRELLAR_API_KEY"
 
         with pytest.raises(ValueError, match="api_key must be provided"):
             evaluate_confidence()
@@ -129,7 +129,7 @@ class TestEvaluateConfidenceValidation:
 # ---------------------------------------------------------------------------
 
 class TestEvaluateConfidenceResponse:
-    @patch("agent_in_the_loop.agent_loop.requests.post")
+    @patch("trellar.agent_loop.requests.post")
     def test_returns_agent_loop_result(self, mock_post, active_handler):
         mock_post.return_value = _successful_post(score=3, explanation="meh")
 
@@ -139,7 +139,7 @@ class TestEvaluateConfidenceResponse:
         assert result.score == 3
         assert result.explanation == "meh"
 
-    @patch("agent_in_the_loop.agent_loop.requests.post")
+    @patch("trellar.agent_loop.requests.post")
     def test_raises_http_error_on_failure_response(self, mock_post, active_handler):
         resp = MagicMock()
         resp.raise_for_status.side_effect = requests.HTTPError("boom")

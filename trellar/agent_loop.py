@@ -44,7 +44,7 @@ class ObservabilityMode(str, Enum):
 
 
 class NetworkHaltedError(Exception):
-    """Raised when Trellar's Agent-in-the-Loop backend signals the agent network must stop."""
+    """Raised when the Trellar backend signals the agent network must stop."""
 
     def __init__(self, explanation: str, score: int, decision_identifier: str):
         self.explanation = explanation
@@ -59,7 +59,7 @@ def get_agent_guard(
     agent_name: str,
     observability_mode: ObservabilityMode = ObservabilityMode.NONE,
 ) -> "_AgentGuardCallback":
-    """Create a callback handler that identifies this graph to the AITL backend.
+    """Create a callback handler that identifies this graph to the Trellar backend.
 
     ``agent_name`` must be a stable, unique name for this agent graph within
     your repository (e.g. ``'research-agent'``, ``'support-bot'``). The backend
@@ -92,7 +92,7 @@ def evaluate_confidence(
     timeout: float = 30.0,
     _observability_call: bool = False,
 ) -> AgentLoopResult:
-    """Call the Agent-in-the-Loop backend to get a confidence score.
+    """Call the Trellar backend to get a confidence score.
 
     ``context``, ``trace_id``, and ``agent_name`` are all resolved automatically
     from the active guard created by :func:`get_agent_guard` — no manual wiring needed::
@@ -103,7 +103,7 @@ def evaluate_confidence(
 
     Args:
         api_key:  Bearer token for authentication.
-                  Defaults to the ``AGENT_IN_THE_LOOP_API_KEY`` env var.
+                  Defaults to the ``TRELLAR_API_KEY`` env var.
         timeout:  HTTP request timeout in seconds (default 30).
         _observability_call: Internal — set by the guard's auto-trigger
                   (see ``ObservabilityMode``) to mark the request as
@@ -137,7 +137,7 @@ def evaluate_confidence(
     if not key:
         raise ValueError(
             "api_key must be provided or set via "
-            f"{settings.ENV_AITL_API_KEY} environment variable."
+            f"{settings.ENV_TRELLAR_API_KEY} environment variable."
         )
 
     url = f"{base_url}/agent-gateway/v1/agent-loop"

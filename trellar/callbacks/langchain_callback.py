@@ -193,7 +193,7 @@ class _AgentGuardCallback(BaseCallbackHandler):
         if not agent_name or not agent_name.strip():
             raise ValueError(
                 "agent_name is required. It uniquely identifies this agent graph in the "
-                "AITL backend and is used to track its network profile across runs. "
+                "Trellar backend and is used to track its network profile across runs. "
                 "Use a stable, descriptive name such as 'research-agent' or 'support-bot'."
             )
         super().__init__()
@@ -629,7 +629,7 @@ class _AgentGuardCallback(BaseCallbackHandler):
     # ------------------------------------------------------------------
 
     def build_context(self) -> str:
-        """Serialize collected events into a structured string for the AITL backend.
+        """Serialize collected events into a structured string for the Trellar backend.
 
         Produces a numbered, step-by-step narrative of the full agent run
         (LLM calls, tool invocations, chain boundaries) suitable as the

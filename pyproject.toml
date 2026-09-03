@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-in-the-loop"
-version = "0.2.7"
-description = "Client library for Agent In The Loop confidence evaluation API"
+name = "trellar"
+version = "0.3.0"
+description = "Client library for the Trellar confidence evaluation API"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
@@ -37,7 +37,7 @@ langchain = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["agent_in_the_loop*"]
+include = ["trellar*"]
 
 [project.urls]
 Homepage = "https://github.com/benarush/AITL"

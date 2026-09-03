@@ -1,11 +1,11 @@
-# agent-in-the-loop
+# trellar
 
-[![PyPI version](https://img.shields.io/pypi/v/agent-in-the-loop.svg)](https://pypi.org/project/agent-in-the-loop/)
-[![Python](https://img.shields.io/pypi/pyversions/agent-in-the-loop.svg)](https://pypi.org/project/agent-in-the-loop/)
+[![PyPI version](https://img.shields.io/pypi/v/trellar.svg)](https://pypi.org/project/trellar/)
+[![Python](https://img.shields.io/pypi/pyversions/trellar.svg)](https://pypi.org/project/trellar/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/benarush/AITL/actions/workflows/ci.yml/badge.svg)](https://github.com/benarush/AITL/actions/workflows/ci.yml)
 
-A lightweight Python client for the **Agent In The Loop (AITL)** confidence evaluation API. Attach a callback to your LangChain / LangGraph run, then call `evaluate_confidence()` when you want a score. Context, trace ID, and agent name are picked up automatically — no manual wiring.
+A lightweight Python client for the **Trellar** confidence evaluation API. Attach a callback to your LangChain / LangGraph run, then call `evaluate_confidence()` when you want a score. Context, trace ID, and agent name are picked up automatically — no manual wiring.
 
 This library cannot be used without an API key from [trellar.io](https://trellar.io).
 
@@ -18,14 +18,14 @@ This library cannot be used without an API key from [trellar.io](https://trellar
 Then pass the key into the SDK (see [Environment Variables](#environment-variables)):
 
 - `evaluate_confidence(api_key="...")`, or
-- `AGENT_IN_THE_LOOP_API_KEY` in the environment
+- `TRELLAR_API_KEY` in the environment
 
 ---
 
 ## Installation
 
 ```bash
-pip install "agent-in-the-loop[langchain]"
+pip install "trellar[langchain]"
 ```
 
 The `langchain` extra is required because agent runs are captured via a LangChain callback handler (`get_agent_guard`). Requires Python 3.9+.
@@ -35,7 +35,7 @@ The `langchain` extra is required because agent runs are captured via a LangChai
 ## Quick Start
 
 ```python
-from agent_in_the_loop import get_agent_guard, evaluate_confidence
+from trellar import get_agent_guard, evaluate_confidence
 
 # agent_name must be a stable, unique name for this agent graph — the
 # backend uses it to track the graph's network profile across runs.
@@ -59,7 +59,7 @@ There are two ways to use the result:
 
 ### 1. Gate — validate before the graph continues
 
-Put the call on an edge you do not want the graph to cross until AITL has scored the run. Use `result.score` / `result.explanation` to decide whether to proceed or stop.
+Put the call on an edge you do not want the graph to cross until Trellar has scored the run. Use `result.score` / `result.explanation` to decide whether to proceed or stop.
 
 ```python
 def confidence_gate(state):
@@ -85,16 +85,16 @@ def report_confidence(state):
 
 ## Environment Variables
 
-The SDK always talks to the managed AITL backend at `https://api.trellar.io` — this is fixed and cannot be overridden via an environment variable or function argument.
+The SDK always talks to the managed Trellar backend at `https://api.trellar.io` — this is fixed and cannot be overridden via an environment variable or function argument.
 
 The API key itself is created only at [trellar.io](https://trellar.io). Once you have it, you can pass it to `evaluate_confidence(api_key=...)` or set it as an environment variable so you do not pass it on every call:
 
 | Variable | Description | Default |
 |---|---|---|
-| `AGENT_IN_THE_LOOP_API_KEY` | Bearer token for authentication | *(required)* |
+| `TRELLAR_API_KEY` | Bearer token for authentication | *(required)* |
 
 ```bash
-export AGENT_IN_THE_LOOP_API_KEY=your-api-key
+export TRELLAR_API_KEY=your-api-key
 ```
 
 ```python
@@ -135,7 +135,7 @@ Controls whether the guard automatically calls `evaluate_confidence()` for you w
 | `ObservabilityMode.IF_NOT_EVALUATED` | Call `evaluate_confidence()` when the run finishes only if it was not already successfully called earlier in the run (e.g. from a gate node). |
 
 ```python
-from agent_in_the_loop import get_agent_guard, ObservabilityMode
+from trellar import get_agent_guard, ObservabilityMode
 
 guard = get_agent_guard("research-agent", ObservabilityMode.IF_NOT_EVALUATED)
 graph.invoke(inputs, config={"callbacks": [guard]})
@@ -158,7 +158,7 @@ evaluate_confidence(
 
 | Parameter | Type | Description |
 |---|---|---|
-| `api_key` | `str \| None` | Bearer token. Falls back to `AGENT_IN_THE_LOOP_API_KEY` |
+| `api_key` | `str \| None` | Bearer token. Falls back to `TRELLAR_API_KEY` |
 | `timeout` | `float` | HTTP request timeout in seconds (default `30.0`) |
 
 `context`, `trace_id`, and `agent_name` are resolved automatically from the active guard created by `get_agent_guard` — there is no way to pass them manually. Requests always go to `https://api.trellar.io`; callers cannot redirect them.

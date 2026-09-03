@@ -6,7 +6,7 @@ import uuid
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel
 
-from agent_in_the_loop.callbacks.langchain_callback import _AgentGuardCallback
+from trellar.callbacks.langchain_callback import _AgentGuardCallback
 
 
 class _FakeTriage(BaseModel):

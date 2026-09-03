@@ -5,9 +5,9 @@ from unittest.mock import patch
 
 import pytest
 
-from agent_in_the_loop import evaluate_confidence, get_agent_guard
-from agent_in_the_loop._context import _current_callback
-from agent_in_the_loop.callbacks.langchain_callback import _AgentGuardCallback
+from trellar import evaluate_confidence, get_agent_guard
+from trellar._context import _current_callback
+from trellar.callbacks.langchain_callback import _AgentGuardCallback
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ class TestAgentGuardCallbackAgentName:
 # ---------------------------------------------------------------------------
 
 class TestEvaluateConfidenceAgentName:
-    @patch("agent_in_the_loop.agent_loop.requests.post")
+    @patch("trellar.agent_loop.requests.post")
     def test_agent_name_included_in_payload(self, mock_post, mock_http_ok, active_handler):
         mock_post.return_value = mock_http_ok
 
@@ -73,7 +73,7 @@ class TestEvaluateConfidenceAgentName:
         payload = mock_post.call_args.kwargs["json"]
         assert payload["agent_name"] == "test-agent"
 
-    @patch("agent_in_the_loop.agent_loop.requests.post")
+    @patch("trellar.agent_loop.requests.post")
     def test_agent_name_matches_guard(self, mock_post, mock_http_ok):
         mock_post.return_value = mock_http_ok
 
@@ -87,7 +87,7 @@ class TestEvaluateConfidenceAgentName:
         finally:
             _current_callback.reset(token)
 
-    @patch("agent_in_the_loop.agent_loop.requests.post")
+    @patch("trellar.agent_loop.requests.post")
     def test_trace_id_also_in_payload(self, mock_post, mock_http_ok, active_handler):
         mock_post.return_value = mock_http_ok
 
