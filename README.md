@@ -155,7 +155,7 @@ get_single_call_guard(
 ) -> BaseCallbackHandler
 ```
 
-Use this instead of `get_agent_guard` when you are calling a chat model directly (`llm.invoke(...)`) with no wrapping LangGraph/chain. `get_agent_guard` relies on the graph's root chain run (`on_chain_start`/`on_chain_end`) to pick up `trace_id` and auto-trigger `evaluate_confidence()` — a bare `llm.invoke()` never fires those events, so `get_single_call_guard` does the equivalent work on the LLM call boundary instead. Agents built with `create_react_agent` are already compiled graphs under the hood, so they work with `get_agent_guard` as usual — `get_single_call_guard` is only for a genuinely bare model call.
+Use this instead of `get_agent_guard` when you are calling a chat model directly (`llm.invoke(...)`) with no wrapping LangGraph/chain. Agents built with `create_react_agent` are already compiled graphs under the hood, so they work with `get_agent_guard` as usual — `get_single_call_guard` is only for a genuinely bare model call.
 
 ```python
 from trellar import get_single_call_guard, evaluate_confidence, ObservabilityMode
