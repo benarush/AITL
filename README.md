@@ -146,6 +146,37 @@ Auto-triggered calls never raise: any error (missing API key, HTTP error, `Netwo
 
 Requests triggered this way are marked in the payload sent to the backend with `observability_call: true` (`false` for a normal, manually-invoked call), so the backend can distinguish automatic observability calls from explicit ones.
 
+### `get_single_call_guard`
+
+```python
+get_single_call_guard(
+    agent_name: str,
+    observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+) -> BaseCallbackHandler
+```
+
+Use this instead of `get_agent_guard` when you are calling a chat model directly (`llm.invoke(...)`) with no wrapping LangGraph/chain. `get_agent_guard` relies on the graph's root chain run (`on_chain_start`/`on_chain_end`) to pick up `trace_id` and auto-trigger `evaluate_confidence()` — a bare `llm.invoke()` never fires those events, so `get_single_call_guard` does the equivalent work on the LLM call boundary instead. Agents built with `create_react_agent` are already compiled graphs under the hood, so they work with `get_agent_guard` as usual — `get_single_call_guard` is only for a genuinely bare model call.
+
+```python
+from trellar import get_single_call_guard, evaluate_confidence, ObservabilityMode
+
+guard = get_single_call_guard("single-llm-call")
+llm.invoke(messages, config={"callbacks": [guard]})
+result = evaluate_confidence()
+```
+
+With `ObservabilityMode.ALWAYS`/`IF_NOT_EVALUATED`, the auto-triggered result is not returned by `invoke()` — read it back from the guard instead:
+
+```python
+guard = get_single_call_guard("single-llm-call", ObservabilityMode.ALWAYS)
+llm.invoke(messages, config={"callbacks": [guard]})
+
+result = guard.trellar_evaluate_result   # AgentLoopResult, or None if not yet evaluated
+error = guard.trellar_evaluate_error     # the exception, if the auto-triggered call failed
+```
+
+Requests made through this guard are marked in the payload with `single_call: true` (`false` for `get_agent_guard`), so the backend can tell the two apart.
+
 ### `evaluate_confidence`
 
 ```python
@@ -169,12 +200,14 @@ evaluate_confidence(
 
 ### `AgentLoopResult`
 
-A frozen dataclass with two fields:
+A frozen dataclass with:
 
 | Field | Type | Description |
 |---|---|---|
 | `score` | `int` | Confidence score from 1 (low) to 10 (high) |
 | `explanation` | `str` | Human-readable explanation of the score |
+| `decision_identifier` | `str` | Unique ID for this evaluation, for cross-referencing with the backend |
+| `should_stop_network` | `bool` | Whether the backend signaled the run should halt (see `NetworkHaltedError`) |
 
 
 ---

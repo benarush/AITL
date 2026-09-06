@@ -12,6 +12,7 @@ from ._context import _current_callback
 
 if TYPE_CHECKING:
     from .callbacks.langchain_callback import _AgentGuardCallback
+    from .callbacks.single_call_callback import _SingleCallGuardCallback
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,44 @@ def get_agent_guard(
     return _AgentGuardCallback(agent_name=agent_name, observability_mode=observability_mode)
 
 
+def get_single_call_guard(
+    agent_name: str,
+    observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+) -> "_SingleCallGuardCallback":
+    """Create a callback handler for a single bare LLM call (no LangGraph/chain wrapper).
+
+    Use this instead of :func:`get_agent_guard` when you are calling a chat
+    model directly (e.g. ``llm.invoke(...)``) rather than invoking a graph or
+    an agent built with ``create_react_agent`` (which is itself a compiled
+    graph, and already works with :func:`get_agent_guard`).
+
+    Usage::
+
+        guard = get_single_call_guard("single-llm-call")
+        llm.invoke(messages, config={"callbacks": [guard]})
+        result = evaluate_confidence()
+
+        # or, with observability_mode=ObservabilityMode.ALWAYS:
+        guard = get_single_call_guard("single-llm-call", ObservabilityMode.ALWAYS)
+        llm.invoke(messages, config={"callbacks": [guard]})
+        result = guard.trellar_evaluate_result
+
+    Args:
+        agent_name: Unique, stable name for this agent within your repository.
+        observability_mode: Controls whether ``evaluate_confidence()`` is
+            auto-triggered when the LLM call finishes. See
+            :class:`ObservabilityMode`. Defaults to ``ObservabilityMode.NONE``
+            (no auto-trigger).
+
+    Returns:
+        An internal callback handler bound to the given agent name. Exposes
+        ``trellar_evaluate_result``/``trellar_evaluate_error`` for reading the outcome of an
+        auto-triggered evaluation.
+    """
+    from .callbacks.single_call_callback import _SingleCallGuardCallback
+    return _SingleCallGuardCallback(agent_name=agent_name, observability_mode=observability_mode)
+
+
 def evaluate_confidence(
     *,
     api_key: Optional[str] = None,
@@ -150,6 +189,7 @@ def evaluate_confidence(
         "trace_id": resolved_trace_id,
         "agent_name": callback.agent_name,
         "observability_call": _observability_call,
+        "single_call": getattr(callback, "is_single_call", False),
     }
 
     response = requests.post(url, json=payload, headers=headers, timeout=timeout)

@@ -9,6 +9,7 @@ import requests
 from trellar import settings
 from trellar.agent_loop import AgentLoopResult, evaluate_confidence
 from trellar._context import _current_callback
+from trellar.callbacks.single_call_callback import _SingleCallGuardCallback
 
 
 def _successful_post(
@@ -72,6 +73,29 @@ class TestEvaluateConfidenceRequest:
 
         payload = mock_post.call_args.kwargs["json"]
         assert payload["context"] == active_handler.events
+
+    @patch("trellar.agent_loop.requests.post")
+    def test_single_call_flag_false_for_graph_handler(self, mock_post, active_handler):
+        mock_post.return_value = _successful_post()
+
+        evaluate_confidence(api_key="key-123")
+
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["single_call"] is False
+
+    @patch("trellar.agent_loop.requests.post")
+    def test_single_call_flag_true_for_single_call_handler(self, mock_post):
+        mock_post.return_value = _successful_post()
+        handler = _SingleCallGuardCallback(agent_name="single-test")
+        handler.trace_id = uuid.uuid4()
+        token = _current_callback.set(handler)
+        try:
+            evaluate_confidence(api_key="key-123")
+        finally:
+            _current_callback.reset(token)
+
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["single_call"] is True
 
     @patch("trellar.agent_loop.requests.post")
     def test_default_timeout_is_30_seconds(self, mock_post, active_handler):
