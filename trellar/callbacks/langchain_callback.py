@@ -126,7 +126,9 @@ class _AgentGuardCallback(BaseCallbackHandler):
     * ``parent_run_id``– direct parent run (``None`` for the root)
     * ``node_name``    – human-readable name of the node/chain/tool/model
     * ``node_type``    – ``"llm"``, ``"tool"``, or ``"chain"``
-    * extra payload fields depending on the event type
+    * extra payload fields depending on the event type, notably
+      ``is_mcp_tool`` (bool) on ``on_tool_end`` events — see
+      :meth:`_is_mcp_tool_output` for what this does and does not detect.
     """
 
     # Maps the LangChain message `type` attribute to a human-readable prefix.
@@ -156,6 +158,37 @@ class _AgentGuardCallback(BaseCallbackHandler):
                     content = str(content)
             return f"{prefix}: {content}"
         return str(msg)
+
+    @staticmethod
+    def _is_mcp_tool_output(output: Any) -> bool:
+        """Detect whether a tool's output came from a langchain-mcp-adapters tool.
+
+        ``langchain_mcp_adapters.tools.convert_mcp_tool_to_langchain_tool()``
+        always builds MCP-derived tools with
+        ``response_format="content_and_artifact"`` and populates the
+        resulting ``ToolMessage.artifact`` with the library's
+        ``MCPToolArtifact`` TypedDict shape: ``{"structured_content": <dict>}``.
+
+        A plain local ``@tool`` function defaults to
+        ``response_format="content"`` and never sets ``.artifact`` at all (it
+        stays ``None``) unless the tool author goes out of their way to opt
+        into artifacts using that exact same key — which essentially never
+        happens by accident.
+
+        This makes the presence of that specific key a reliable, generic
+        fingerprint of langchain-mcp-adapters usage — present automatically on
+        every MCP tool call regardless of transport (stdio, SSE, streamable
+        HTTP), with zero cooperation needed from the tool author or graph
+        author.
+
+        Caveat: this specifically detects tools loaded via
+        langchain-mcp-adapters (the dominant, standard way to bridge MCP
+        tools into LangChain/LangGraph). It will NOT detect a hand-rolled MCP
+        client that talks to an MCP server without going through this
+        library's conversion helpers.
+        """
+        artifact = getattr(output, "artifact", None)
+        return isinstance(artifact, dict) and "structured_content" in artifact
 
     @staticmethod
     def _serialize_messages(messages: list[Any]) -> list[str]:
@@ -463,8 +496,13 @@ class _AgentGuardCallback(BaseCallbackHandler):
         parent_run_id: Optional[uuid.UUID] = None,
         **kwargs: Any,
     ) -> None:
+        # Must run BEFORE serialization: _serialize_message_obj only looks at
+        # `.type`/`.content` and would otherwise silently drop `.artifact`.
+        is_mcp_tool = self._is_mcp_tool_output(output)
         serialized_output = self._serialize_message_obj(output)
-        self._record("on_tool_end", run_id, parent_run_id, output=serialized_output)
+        self._record(
+            "on_tool_end", run_id, parent_run_id, output=serialized_output, is_mcp_tool=is_mcp_tool
+        )
         tool_name = self._run_registry.get(str(run_id), {}).get("name")
         self._attach_tool_response_to_llm(tool_name, serialized_output, parent_run_id)
 
@@ -673,7 +711,12 @@ class _AgentGuardCallback(BaseCallbackHandler):
                 lines.append(f"  input: {_compact_json(event.get('input', {}))}")
 
             elif event_name == "on_tool_end":
-                lines.append(f"  output: {_compact_json(event.get('output', ''))}")
+                # Surface the MCP fingerprint in the narrative sent to the LLM
+                # confidence evaluator: a tool call that went through an
+                # external MCP provider is meaningfully different provenance
+                # than a local in-process function, so this is signal, not noise.
+                via_mcp = " (via MCP)" if event.get("is_mcp_tool") else ""
+                lines.append(f"  output{via_mcp}: {_compact_json(event.get('output', ''))}")
 
             elif event_name == "on_chain_start":
                 lines.append(f"  inputs: {_compact_json(event.get('inputs', {}))}")

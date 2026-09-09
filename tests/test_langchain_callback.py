@@ -628,6 +628,111 @@ class TestOnToolEndAttachment:
 
 
 # ---------------------------------------------------------------------------
+# on_tool_end — MCP tool-call auto-detection (is_mcp_tool)
+# ---------------------------------------------------------------------------
+
+class TestIsMcpToolOutput:
+    """Unit tests for the static `_is_mcp_tool_output` fingerprint check."""
+
+    def test_dict_artifact_with_structured_content_key_is_mcp(self):
+        msg = ToolMessage(
+            content="hi", tool_call_id="1", artifact={"structured_content": {"a": 1}}
+        )
+        assert _AgentGuardCallback._is_mcp_tool_output(msg) is True
+
+    def test_no_artifact_is_not_mcp(self):
+        msg = ToolMessage(content="hi", tool_call_id="1")
+        assert _AgentGuardCallback._is_mcp_tool_output(msg) is False
+
+    def test_plain_string_output_is_not_mcp(self):
+        assert _AgentGuardCallback._is_mcp_tool_output("plain string") is False
+
+    def test_non_dict_artifact_is_not_mcp(self):
+        msg = ToolMessage(content="hi", tool_call_id="1", artifact="not-a-dict")
+        assert _AgentGuardCallback._is_mcp_tool_output(msg) is False
+
+    def test_dict_artifact_missing_structured_content_key_is_not_mcp(self):
+        """Guards against false positives: some other, unrelated artifact
+        shape that happens to be a dict must not be misdetected as MCP."""
+        msg = ToolMessage(content="hi", tool_call_id="1", artifact={"other_key": {}})
+        assert _AgentGuardCallback._is_mcp_tool_output(msg) is False
+
+
+class TestOnToolEndMcpDetection:
+    """Integration tests: `on_tool_end` records `is_mcp_tool` on the event."""
+
+    def test_plain_local_tool_output_records_is_mcp_tool_false(self, active_handler):
+        """A plain local @tool-style output (bare string, no .artifact) must
+        be flagged as NOT an MCP tool call."""
+        run_id = uuid.uuid4()
+        active_handler.on_tool_start({"name": "local_tool"}, "{}", run_id=run_id, parent_run_id=None)
+        active_handler.on_tool_end("got hi", run_id=run_id, parent_run_id=None)
+
+        event = active_handler.events[-1]
+        assert event["event"] == "on_tool_end"
+        assert event["is_mcp_tool"] is False
+
+    def test_mcp_tool_output_records_is_mcp_tool_true(self, active_handler):
+        """A ToolMessage with the langchain-mcp-adapters artifact shape
+        (`{"structured_content": {...}}`) must be flagged as an MCP tool call."""
+        run_id = uuid.uuid4()
+        mcp_output = ToolMessage(
+            content=[{"type": "text", "text": "some-id", "id": "lc_1"}],
+            name="create_purchase_ticket",
+            tool_call_id="call_2",
+            artifact={"structured_content": {"result": "some-id"}},
+        )
+        active_handler.on_tool_start(
+            {"name": "create_purchase_ticket"}, "{}", run_id=run_id, parent_run_id=None
+        )
+        active_handler.on_tool_end(mcp_output, run_id=run_id, parent_run_id=None)
+
+        event = active_handler.events[-1]
+        assert event["event"] == "on_tool_end"
+        assert event["is_mcp_tool"] is True
+        json.dumps(event)  # must remain JSON-serializable after enrichment
+
+    def test_is_mcp_tool_event_is_json_serializable(self, active_handler):
+        """The .artifact dict itself must never leak into the recorded event
+        (only the derived boolean should)."""
+        run_id = uuid.uuid4()
+        mcp_output = ToolMessage(
+            content="text",
+            tool_call_id="call_3",
+            artifact={"structured_content": {"nested": {"a": [1, 2, 3]}}},
+        )
+        active_handler.on_tool_start({"name": "some_mcp_tool"}, "{}", run_id=run_id, parent_run_id=None)
+        active_handler.on_tool_end(mcp_output, run_id=run_id, parent_run_id=None)
+
+        event = active_handler.events[-1]
+        assert "artifact" not in event
+        assert isinstance(event["output"], str)
+        json.dumps(event)
+
+
+class TestBuildContextMcpMarker:
+    def test_mcp_tool_end_renders_via_mcp_marker(self, active_handler):
+        run_id = uuid.uuid4()
+        mcp_output = ToolMessage(
+            content="ticket-123", tool_call_id="1", artifact={"structured_content": {"a": 1}}
+        )
+        active_handler.on_tool_start({"name": "create_purchase_ticket"}, "{}", run_id=run_id, parent_run_id=None)
+        active_handler.on_tool_end(mcp_output, run_id=run_id, parent_run_id=None)
+
+        context = active_handler.build_context()
+        assert "output (via MCP):" in context
+
+    def test_non_mcp_tool_end_omits_via_mcp_marker(self, active_handler):
+        run_id = uuid.uuid4()
+        active_handler.on_tool_start({"name": "local_tool"}, "{}", run_id=run_id, parent_run_id=None)
+        active_handler.on_tool_end("plain output", run_id=run_id, parent_run_id=None)
+
+        context = active_handler.build_context()
+        assert "output (via MCP):" not in context
+        assert "output: " in context
+
+
+# ---------------------------------------------------------------------------
 # on_chain_start — root-run reset behavior
 # ---------------------------------------------------------------------------
 
