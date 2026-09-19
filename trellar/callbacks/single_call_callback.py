@@ -104,6 +104,12 @@ class _SingleCallGuardCallback(_AgentGuardCallback):
         super().on_llm_end(response, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
         if parent_run_id is None:
             self._auto_evaluate()
+            # Release the slot so the next top-level call (e.g. the next task
+            # picked up by a reused Celery worker process) starts from a
+            # clean ContextVar instead of inheriting this run's handler.
+            # Guarded by identity in case something else already replaced us.
+            if _current_callback.get() is self:
+                _current_callback.set(None)
 
     def _auto_evaluate(self) -> None:
         """Local equivalent of _maybe_auto_evaluate; stores the outcome on

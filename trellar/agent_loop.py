@@ -70,8 +70,17 @@ def get_agent_guard(
     Usage::
 
         guard = get_agent_guard("research-agent")
+
+        def confidence_gate(state):
+            result = evaluate_confidence()
+            ...
+
         graph.invoke(input, config={"callbacks": [guard]})
-        result = evaluate_confidence()
+
+    ``evaluate_confidence()`` must be called from inside a graph node, while
+    the run is still in progress — not after ``graph.invoke()`` returns. The
+    callback handler is released as soon as the root run ends, so a call made
+    after ``invoke()`` returns will raise ``ValueError``.
 
     Args:
         agent_name: Unique, stable name for this agent graph.
@@ -98,13 +107,12 @@ def get_single_call_guard(
     an agent built with ``create_react_agent`` (which is itself a compiled
     graph, and already works with :func:`get_agent_guard`).
 
-    Usage::
+    A bare ``llm.invoke()`` call has no node to call ``evaluate_confidence()``
+    from mid-run, and the callback handler is released as soon as the call
+    finishes — so a manual call is never supported here. Use
+    ``observability_mode=ObservabilityMode.ALWAYS`` (or ``IF_NOT_EVALUATED``)
+    to auto-trigger the evaluation, then read the result off the guard::
 
-        guard = get_single_call_guard("single-llm-call")
-        llm.invoke(messages, config={"callbacks": [guard]})
-        result = evaluate_confidence()
-
-        # or, with observability_mode=ObservabilityMode.ALWAYS:
         guard = get_single_call_guard("single-llm-call", ObservabilityMode.ALWAYS)
         llm.invoke(messages, config={"callbacks": [guard]})
         result = guard.trellar_evaluate_result
@@ -134,11 +142,17 @@ def evaluate_confidence(
     """Call the Trellar backend to get a confidence score.
 
     ``context``, ``trace_id``, and ``agent_name`` are all resolved automatically
-    from the active guard created by :func:`get_agent_guard` — no manual wiring needed::
+    from the active guard created by :func:`get_agent_guard` — no manual wiring needed.
+    Must be called from inside a graph node while the run is still in progress,
+    not after ``graph.invoke()`` returns::
 
         guard = get_agent_guard("research-agent")
+
+        def confidence_gate(state):
+            result = evaluate_confidence()
+            ...
+
         graph.invoke(input, config={"callbacks": [guard]})
-        result = evaluate_confidence()
 
     Args:
         api_key:  Bearer token for authentication.

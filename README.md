@@ -41,19 +41,22 @@ from trellar import get_agent_guard, evaluate_confidence
 # backend uses it to track the graph's network profile across runs.
 guard = get_agent_guard("research-agent")
 
-graph.invoke(inputs, config={"callbacks": [guard]})
+# call evaluate_confidence() from a node, while the run is still in progress —
+# context, trace_id, and agent_name are picked up from the guard automatically
+def report_confidence(state):
+    result = evaluate_confidence()
+    print(result.score)        # int, 1-10
+    print(result.explanation)  # str, human-readable reasoning
+    return state
 
-# context, trace_id, and agent_name are picked up from the guard
-result = evaluate_confidence()
-print(result.score)        # int, 1-10
-print(result.explanation)  # str, human-readable reasoning
+graph.invoke(inputs, config={"callbacks": [guard]})
 ```
 
 ---
 
 ## Where to call `evaluate_confidence`
 
-Call it from a graph node (or after `invoke()`), at the point in the run you want scored. The payload is the events captured **so far** — later nodes are not included.
+Call it from a graph node, at the point in the run you want scored, while the run is still in progress — the callback handler is released as soon as the root run ends, so calling it after `invoke()` returns raises `ValueError`. The payload is the events captured **so far** — later nodes are not included.
 
 There are two ways to use the result:
 
@@ -73,7 +76,7 @@ Wire that node in front of the next step, and only continue when the score is ac
 
 ### 2. Observe — send a validation, do not restrict the graph
 
-Put the call anywhere you want a score recorded (a node, or after `invoke()`). Store or log `result` if you want it; do not branch on it. The graph continues either way.
+Put the call in any node where you want a score recorded. Store or log `result` if you want it; do not branch on it. The graph continues either way.
 
 ```python
 def report_confidence(state):
@@ -157,17 +160,11 @@ get_single_call_guard(
 
 Use this instead of `get_agent_guard` when you are calling a chat model directly (`llm.invoke(...)`) with no wrapping LangGraph/chain. Agents built with `create_react_agent` are already compiled graphs under the hood, so they work with `get_agent_guard` as usual — `get_single_call_guard` is only for a genuinely bare model call.
 
-```python
-from trellar import get_single_call_guard, evaluate_confidence, ObservabilityMode
-
-guard = get_single_call_guard("single-llm-call")
-llm.invoke(messages, config={"callbacks": [guard]})
-result = evaluate_confidence()
-```
-
-With `ObservabilityMode.ALWAYS`/`IF_NOT_EVALUATED`, the auto-triggered result is not returned by `invoke()` — read it back from the guard instead:
+A bare `llm.invoke()` call has no node to call `evaluate_confidence()` from mid-run, and the callback handler is released as soon as the call finishes — so a manual call is never supported here. Use `ObservabilityMode.ALWAYS` (or `IF_NOT_EVALUATED`) to auto-trigger the evaluation, then read the result back from the guard:
 
 ```python
+from trellar import get_single_call_guard, ObservabilityMode
+
 guard = get_single_call_guard("single-llm-call", ObservabilityMode.ALWAYS)
 llm.invoke(messages, config={"callbacks": [guard]})
 

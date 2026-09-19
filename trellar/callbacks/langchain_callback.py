@@ -628,13 +628,15 @@ class _AgentGuardCallback(BaseCallbackHandler):
         if isinstance(outputs, dict) and "messages" in outputs:
             outputs = {**outputs, "messages": self._serialize_messages(outputs["messages"])}
         self._record("on_chain_end", run_id, parent_run_id, outputs=self._to_jsonable(outputs))
-        # Do NOT clear _current_callback here. ContextVar is already scoped per
-        # asyncio Task / thread, so it never leaks across concurrent runs.
-        # Clearing it before graph.invoke() returns would make evaluate_confidence()
-        # fail when called after the graph completes.
         if parent_run_id is None:
             # Root run ending — the whole graph flow has reached its end.
             self._maybe_auto_evaluate()
+            # Release the slot so the next top-level run (e.g. the next task
+            # picked up by a reused Celery worker process) starts from a
+            # clean ContextVar instead of inheriting this run's handler.
+            # Guarded by identity in case something else already replaced us.
+            if _current_callback.get() is self:
+                _current_callback.set(None)
 
     def _maybe_auto_evaluate(self) -> None:
         """Auto-trigger evaluate_confidence() per self.observability_mode.
