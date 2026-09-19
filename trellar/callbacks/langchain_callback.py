@@ -344,6 +344,8 @@ class _AgentGuardCallback(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         model = _extract_model_name(serialized)
+        # TODO: discover best practice for sending that payload
+        tools = kwargs.get("invocation_params", {}).get("tools")
         self._register(run_id, model, "llm")
 
         # messages is list[list[BaseMessage]] — one inner list per prompt batch item.
