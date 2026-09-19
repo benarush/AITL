@@ -665,6 +665,12 @@ class _AgentGuardCallback(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         self._record("on_chain_error", run_id, parent_run_id, error=str(error))
+        if parent_run_id is None:
+            # Root run failing — on_chain_end will never fire for this run_id
+            # (they are mutually exclusive), so release the slot here too.
+            # Guarded by identity in case something else already replaced us.
+            if _current_callback.get() is self:
+                _current_callback.set(None)
 
     # ------------------------------------------------------------------
     # Context serialization

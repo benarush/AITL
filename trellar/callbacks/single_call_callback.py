@@ -111,6 +111,22 @@ class _SingleCallGuardCallback(_AgentGuardCallback):
             if _current_callback.get() is self:
                 _current_callback.set(None)
 
+    def on_llm_error(
+        self,
+        error: BaseException,
+        *,
+        run_id: uuid.UUID,
+        parent_run_id: Optional[uuid.UUID] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().on_llm_error(error, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
+        if parent_run_id is None:
+            # Root call failing — on_llm_end will never fire for this run_id
+            # (they are mutually exclusive), so release the slot here too.
+            # Guarded by identity in case something else already replaced us.
+            if _current_callback.get() is self:
+                _current_callback.set(None)
+
     def _auto_evaluate(self) -> None:
         """Local equivalent of _maybe_auto_evaluate; stores the outcome on
         this instance instead of discarding it. Not added to the base class.

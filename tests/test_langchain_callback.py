@@ -953,3 +953,99 @@ class TestBuildContext:
         for line in context.splitlines():
             if line.startswith("[Step") and "on_llm_error" in line:
                 assert "(" not in line
+
+
+# ---------------------------------------------------------------------------
+# on_chain_end / on_chain_error — _current_callback release (root run only)
+#
+# on_chain_start's root block registers the handler via _current_callback.set(self).
+# Whichever of on_chain_end / on_chain_error fires next for that same run_id
+# (they are mutually exclusive) must release that registration, so a reused
+# handler/worker never sees a stale reference to a finished or crashed run.
+# ---------------------------------------------------------------------------
+
+class TestCurrentCallbackReleaseOnChainEnd:
+    def test_root_chain_end_clears_current_callback(self, active_handler):
+        run_id = uuid.uuid4()
+        active_handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
+        assert _current_callback.get() is active_handler
+
+        active_handler.on_chain_end({}, run_id=run_id, parent_run_id=None)
+
+        assert _current_callback.get() is None
+
+    def test_non_root_chain_end_does_not_clear_current_callback(self, active_handler):
+        root_run = uuid.uuid4()
+        active_handler.on_chain_start({"name": "graph"}, {}, run_id=root_run, parent_run_id=None)
+        sub_run = uuid.uuid4()
+        active_handler.on_chain_start({"name": "sub"}, {}, run_id=sub_run, parent_run_id=root_run)
+
+        active_handler.on_chain_end({}, run_id=sub_run, parent_run_id=root_run)
+
+        assert _current_callback.get() is active_handler
+
+    def test_root_chain_end_does_not_clobber_a_different_active_handler(self):
+        # Defends the `is self` identity guard: if something else has since
+        # become the active handler, this handler's own root on_chain_end
+        # must not blindly clear/overwrite that registration.
+        handler = _AgentGuardCallback(agent_name="a")
+        run_id = uuid.uuid4()
+        handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
+
+        other = _AgentGuardCallback(agent_name="b")
+        token = _current_callback.set(other)
+        try:
+            handler.on_chain_end({}, run_id=run_id, parent_run_id=None)
+            assert _current_callback.get() is other
+        finally:
+            _current_callback.reset(token)
+
+
+class TestCurrentCallbackReleaseOnChainError:
+    def test_root_chain_error_clears_current_callback(self, active_handler):
+        run_id = uuid.uuid4()
+        active_handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
+
+        active_handler.on_chain_error(RuntimeError("boom"), run_id=run_id, parent_run_id=None)
+
+        assert _current_callback.get() is None
+
+    def test_non_root_chain_error_does_not_clear_current_callback(self, active_handler):
+        root_run = uuid.uuid4()
+        active_handler.on_chain_start({"name": "graph"}, {}, run_id=root_run, parent_run_id=None)
+        sub_run = uuid.uuid4()
+        active_handler.on_chain_start({"name": "sub"}, {}, run_id=sub_run, parent_run_id=root_run)
+
+        active_handler.on_chain_error(RuntimeError("boom"), run_id=sub_run, parent_run_id=root_run)
+
+        assert _current_callback.get() is active_handler
+
+    def test_root_chain_error_does_not_clobber_a_different_active_handler(self):
+        handler = _AgentGuardCallback(agent_name="a")
+        run_id = uuid.uuid4()
+        handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
+
+        other = _AgentGuardCallback(agent_name="b")
+        token = _current_callback.set(other)
+        try:
+            handler.on_chain_error(RuntimeError("boom"), run_id=run_id, parent_run_id=None)
+            assert _current_callback.get() is other
+        finally:
+            _current_callback.reset(token)
+
+    def test_on_chain_end_never_fires_for_a_run_that_errored(self):
+        # Regression guard for the exact bug this all started from: on_chain_end
+        # and on_chain_error are mutually exclusive per run_id (see LangGraph's
+        # RunnableSeq/Pregel invoke -- try/except/else around each run). A crash
+        # must go through the error-path release, not silently rely on a
+        # never-to-arrive on_chain_end.
+        handler = _AgentGuardCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
+        run_id = uuid.uuid4()
+        handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
+
+        with patch("trellar.agent_loop.evaluate_confidence") as mock_eval:
+            handler.on_chain_error(RuntimeError("boom"), run_id=run_id, parent_run_id=None)
+
+        # Auto-evaluate is an on_chain_end-only concern; it must not fire here.
+        mock_eval.assert_not_called()
+        assert _current_callback.get() is None
