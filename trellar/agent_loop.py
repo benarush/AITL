@@ -204,6 +204,12 @@ def evaluate_confidence(
         "agent_name": callback.agent_name,
         "observability_call": _observability_call,
         "single_call": getattr(callback, "is_single_call", False),
+        # One entry per distinct model bound during this run, not per LLM call —
+        # see _AgentGuardCallback.available_tools.
+        "available_tools": [
+            {"model": model, "tools": tools}
+            for model, tools in callback.available_tools.items()
+        ],
     }
 
     response = requests.post(url, json=payload, headers=headers, timeout=timeout)

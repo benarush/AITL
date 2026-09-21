@@ -280,6 +280,24 @@ class TestOnChatModelStart:
         )
         assert active_handler._run_registry[str(run_id)]["type"] == "llm"
 
+    def test_records_available_tools_by_model(self, active_handler):
+        run_id = uuid.uuid4()
+        tools = [{"name": "get_weather", "description": "Look up the weather"}]
+        active_handler.on_chat_model_start(
+            {"kwargs": {"model": "gpt-4o"}}, [[HumanMessage(content="hi")]],
+            run_id=run_id, parent_run_id=None,
+            invocation_params={"tools": tools},
+        )
+        assert active_handler.available_tools == {"gpt-4o": tools}
+
+    def test_no_tools_leaves_available_tools_empty(self, active_handler):
+        run_id = uuid.uuid4()
+        active_handler.on_chat_model_start(
+            {"kwargs": {"model": "gpt-4o"}}, [[HumanMessage(content="hi")]],
+            run_id=run_id, parent_run_id=None,
+        )
+        assert active_handler.available_tools == {}
+
 
 # ---------------------------------------------------------------------------
 # on_llm_end — text extraction, tool-call folding, token usage

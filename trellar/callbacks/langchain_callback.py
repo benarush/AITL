@@ -245,6 +245,12 @@ class _AgentGuardCallback(BaseCallbackHandler):
         #   {"event": <recorded event dict>, "parent_run_id": str | None,
         #    "remaining_tools": [tool names...]}
         self._pending_llm_tool_calls: list[dict[str, Any]] = []
+        # model name -> tool schemas bound to that model, captured from
+        # on_chat_model_start's invocation_params. One entry per distinct model
+        # for the whole run (not per LLM call), so the same bound tools aren't
+        # repeated on every turn. Reset per top-level invocation alongside the
+        # other run state below.
+        self.available_tools: dict[str, list[Any]] = {}
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -344,8 +350,9 @@ class _AgentGuardCallback(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         model = _extract_model_name(serialized)
-        # TODO: discover best practice for sending that payload
         tools = kwargs.get("invocation_params", {}).get("tools")
+        if tools and model:
+            self.available_tools[model] = self._to_jsonable(tools)
         self._register(run_id, model, "llm")
 
         # messages is list[list[BaseMessage]] — one inner list per prompt batch item.
@@ -582,6 +589,7 @@ class _AgentGuardCallback(BaseCallbackHandler):
             self._step = 0
             self._run_registry = {}
             self._pending_llm_tool_calls = []
+            self.available_tools = {}
             self._evaluated = False
             # Self-register so evaluate_confidence() can pick us up automatically.
             _current_callback.set(self)

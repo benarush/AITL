@@ -61,6 +61,7 @@ class _SingleCallGuardCallback(_AgentGuardCallback):
         self._step = 0
         self._run_registry = {}
         self._pending_llm_tool_calls = []
+        self.available_tools = {}
         self._evaluated = False
         self.trellar_evaluate_result = None
         self.trellar_evaluate_error = None
