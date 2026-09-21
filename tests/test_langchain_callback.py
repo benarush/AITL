@@ -280,6 +280,48 @@ class TestOnChatModelStart:
         )
         assert active_handler._run_registry[str(run_id)]["type"] == "llm"
 
+    def test_records_available_tools_keyed_by_content_hash(self, active_handler):
+        run_id = uuid.uuid4()
+        tools = [{"name": "get_weather", "description": "Look up the weather"}]
+        active_handler.on_chat_model_start(
+            {"kwargs": {"model": "gpt-4o"}}, [[HumanMessage(content="hi")]],
+            run_id=run_id, parent_run_id=None,
+            invocation_params={"tools": tools},
+        )
+        # Keyed by content hash, not "gpt-4o" — the model string lives in a
+        # different namespace than the node_name the backend attributes this
+        # call to, so it can't be used to correlate the two later.
+        assert list(active_handler.available_tools.values()) == [tools]
+        (tools_hash,) = active_handler.available_tools.keys()
+        assert tools_hash and tools_hash != "gpt-4o"
+        # The same hash must be stamped onto the recorded event so the backend
+        # can carry it through to the AgentData this call resolves to.
+        assert active_handler.events[-1]["tools_hash"] == tools_hash
+
+    def test_identical_toolset_across_calls_dedupes_to_one_entry(self, active_handler):
+        tools = [{"name": "get_weather", "description": "Look up the weather"}]
+        active_handler.on_chat_model_start(
+            {"kwargs": {"model": "gpt-4o"}}, [[HumanMessage(content="turn 1")]],
+            run_id=uuid.uuid4(), parent_run_id=None,
+            invocation_params={"tools": tools},
+        )
+        active_handler.on_chat_model_start(
+            {"kwargs": {"model": "gemini-2.5-flash"}}, [[HumanMessage(content="turn 2")]],
+            run_id=uuid.uuid4(), parent_run_id=None,
+            invocation_params={"tools": tools},
+        )
+        assert len(active_handler.available_tools) == 1
+        assert active_handler.events[-2]["tools_hash"] == active_handler.events[-1]["tools_hash"]
+
+    def test_no_tools_leaves_available_tools_empty(self, active_handler):
+        run_id = uuid.uuid4()
+        active_handler.on_chat_model_start(
+            {"kwargs": {"model": "gpt-4o"}}, [[HumanMessage(content="hi")]],
+            run_id=run_id, parent_run_id=None,
+        )
+        assert active_handler.available_tools == {}
+        assert active_handler.events[-1]["tools_hash"] is None
+
 
 # ---------------------------------------------------------------------------
 # on_llm_end — text extraction, tool-call folding, token usage
@@ -628,6 +670,111 @@ class TestOnToolEndAttachment:
 
 
 # ---------------------------------------------------------------------------
+# on_tool_end — MCP tool-call auto-detection (is_mcp_tool)
+# ---------------------------------------------------------------------------
+
+class TestIsMcpToolOutput:
+    """Unit tests for the static `_is_mcp_tool_output` fingerprint check."""
+
+    def test_dict_artifact_with_structured_content_key_is_mcp(self):
+        msg = ToolMessage(
+            content="hi", tool_call_id="1", artifact={"structured_content": {"a": 1}}
+        )
+        assert _AgentGuardCallback._is_mcp_tool_output(msg) is True
+
+    def test_no_artifact_is_not_mcp(self):
+        msg = ToolMessage(content="hi", tool_call_id="1")
+        assert _AgentGuardCallback._is_mcp_tool_output(msg) is False
+
+    def test_plain_string_output_is_not_mcp(self):
+        assert _AgentGuardCallback._is_mcp_tool_output("plain string") is False
+
+    def test_non_dict_artifact_is_not_mcp(self):
+        msg = ToolMessage(content="hi", tool_call_id="1", artifact="not-a-dict")
+        assert _AgentGuardCallback._is_mcp_tool_output(msg) is False
+
+    def test_dict_artifact_missing_structured_content_key_is_not_mcp(self):
+        """Guards against false positives: some other, unrelated artifact
+        shape that happens to be a dict must not be misdetected as MCP."""
+        msg = ToolMessage(content="hi", tool_call_id="1", artifact={"other_key": {}})
+        assert _AgentGuardCallback._is_mcp_tool_output(msg) is False
+
+
+class TestOnToolEndMcpDetection:
+    """Integration tests: `on_tool_end` records `is_mcp_tool` on the event."""
+
+    def test_plain_local_tool_output_records_is_mcp_tool_false(self, active_handler):
+        """A plain local @tool-style output (bare string, no .artifact) must
+        be flagged as NOT an MCP tool call."""
+        run_id = uuid.uuid4()
+        active_handler.on_tool_start({"name": "local_tool"}, "{}", run_id=run_id, parent_run_id=None)
+        active_handler.on_tool_end("got hi", run_id=run_id, parent_run_id=None)
+
+        event = active_handler.events[-1]
+        assert event["event"] == "on_tool_end"
+        assert event["is_mcp_tool"] is False
+
+    def test_mcp_tool_output_records_is_mcp_tool_true(self, active_handler):
+        """A ToolMessage with the langchain-mcp-adapters artifact shape
+        (`{"structured_content": {...}}`) must be flagged as an MCP tool call."""
+        run_id = uuid.uuid4()
+        mcp_output = ToolMessage(
+            content=[{"type": "text", "text": "some-id", "id": "lc_1"}],
+            name="create_purchase_ticket",
+            tool_call_id="call_2",
+            artifact={"structured_content": {"result": "some-id"}},
+        )
+        active_handler.on_tool_start(
+            {"name": "create_purchase_ticket"}, "{}", run_id=run_id, parent_run_id=None
+        )
+        active_handler.on_tool_end(mcp_output, run_id=run_id, parent_run_id=None)
+
+        event = active_handler.events[-1]
+        assert event["event"] == "on_tool_end"
+        assert event["is_mcp_tool"] is True
+        json.dumps(event)  # must remain JSON-serializable after enrichment
+
+    def test_is_mcp_tool_event_is_json_serializable(self, active_handler):
+        """The .artifact dict itself must never leak into the recorded event
+        (only the derived boolean should)."""
+        run_id = uuid.uuid4()
+        mcp_output = ToolMessage(
+            content="text",
+            tool_call_id="call_3",
+            artifact={"structured_content": {"nested": {"a": [1, 2, 3]}}},
+        )
+        active_handler.on_tool_start({"name": "some_mcp_tool"}, "{}", run_id=run_id, parent_run_id=None)
+        active_handler.on_tool_end(mcp_output, run_id=run_id, parent_run_id=None)
+
+        event = active_handler.events[-1]
+        assert "artifact" not in event
+        assert isinstance(event["output"], str)
+        json.dumps(event)
+
+
+class TestBuildContextMcpMarker:
+    def test_mcp_tool_end_renders_via_mcp_marker(self, active_handler):
+        run_id = uuid.uuid4()
+        mcp_output = ToolMessage(
+            content="ticket-123", tool_call_id="1", artifact={"structured_content": {"a": 1}}
+        )
+        active_handler.on_tool_start({"name": "create_purchase_ticket"}, "{}", run_id=run_id, parent_run_id=None)
+        active_handler.on_tool_end(mcp_output, run_id=run_id, parent_run_id=None)
+
+        context = active_handler.build_context()
+        assert "output (via MCP):" in context
+
+    def test_non_mcp_tool_end_omits_via_mcp_marker(self, active_handler):
+        run_id = uuid.uuid4()
+        active_handler.on_tool_start({"name": "local_tool"}, "{}", run_id=run_id, parent_run_id=None)
+        active_handler.on_tool_end("plain output", run_id=run_id, parent_run_id=None)
+
+        context = active_handler.build_context()
+        assert "output (via MCP):" not in context
+        assert "output: " in context
+
+
+# ---------------------------------------------------------------------------
 # on_chain_start — root-run reset behavior
 # ---------------------------------------------------------------------------
 
@@ -848,3 +995,99 @@ class TestBuildContext:
         for line in context.splitlines():
             if line.startswith("[Step") and "on_llm_error" in line:
                 assert "(" not in line
+
+
+# ---------------------------------------------------------------------------
+# on_chain_end / on_chain_error — _current_callback release (root run only)
+#
+# on_chain_start's root block registers the handler via _current_callback.set(self).
+# Whichever of on_chain_end / on_chain_error fires next for that same run_id
+# (they are mutually exclusive) must release that registration, so a reused
+# handler/worker never sees a stale reference to a finished or crashed run.
+# ---------------------------------------------------------------------------
+
+class TestCurrentCallbackReleaseOnChainEnd:
+    def test_root_chain_end_clears_current_callback(self, active_handler):
+        run_id = uuid.uuid4()
+        active_handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
+        assert _current_callback.get() is active_handler
+
+        active_handler.on_chain_end({}, run_id=run_id, parent_run_id=None)
+
+        assert _current_callback.get() is None
+
+    def test_non_root_chain_end_does_not_clear_current_callback(self, active_handler):
+        root_run = uuid.uuid4()
+        active_handler.on_chain_start({"name": "graph"}, {}, run_id=root_run, parent_run_id=None)
+        sub_run = uuid.uuid4()
+        active_handler.on_chain_start({"name": "sub"}, {}, run_id=sub_run, parent_run_id=root_run)
+
+        active_handler.on_chain_end({}, run_id=sub_run, parent_run_id=root_run)
+
+        assert _current_callback.get() is active_handler
+
+    def test_root_chain_end_does_not_clobber_a_different_active_handler(self):
+        # Defends the `is self` identity guard: if something else has since
+        # become the active handler, this handler's own root on_chain_end
+        # must not blindly clear/overwrite that registration.
+        handler = _AgentGuardCallback(agent_name="a")
+        run_id = uuid.uuid4()
+        handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
+
+        other = _AgentGuardCallback(agent_name="b")
+        token = _current_callback.set(other)
+        try:
+            handler.on_chain_end({}, run_id=run_id, parent_run_id=None)
+            assert _current_callback.get() is other
+        finally:
+            _current_callback.reset(token)
+
+
+class TestCurrentCallbackReleaseOnChainError:
+    def test_root_chain_error_clears_current_callback(self, active_handler):
+        run_id = uuid.uuid4()
+        active_handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
+
+        active_handler.on_chain_error(RuntimeError("boom"), run_id=run_id, parent_run_id=None)
+
+        assert _current_callback.get() is None
+
+    def test_non_root_chain_error_does_not_clear_current_callback(self, active_handler):
+        root_run = uuid.uuid4()
+        active_handler.on_chain_start({"name": "graph"}, {}, run_id=root_run, parent_run_id=None)
+        sub_run = uuid.uuid4()
+        active_handler.on_chain_start({"name": "sub"}, {}, run_id=sub_run, parent_run_id=root_run)
+
+        active_handler.on_chain_error(RuntimeError("boom"), run_id=sub_run, parent_run_id=root_run)
+
+        assert _current_callback.get() is active_handler
+
+    def test_root_chain_error_does_not_clobber_a_different_active_handler(self):
+        handler = _AgentGuardCallback(agent_name="a")
+        run_id = uuid.uuid4()
+        handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
+
+        other = _AgentGuardCallback(agent_name="b")
+        token = _current_callback.set(other)
+        try:
+            handler.on_chain_error(RuntimeError("boom"), run_id=run_id, parent_run_id=None)
+            assert _current_callback.get() is other
+        finally:
+            _current_callback.reset(token)
+
+    def test_on_chain_end_never_fires_for_a_run_that_errored(self):
+        # Regression guard for the exact bug this all started from: on_chain_end
+        # and on_chain_error are mutually exclusive per run_id (see LangGraph's
+        # RunnableSeq/Pregel invoke -- try/except/else around each run). A crash
+        # must go through the error-path release, not silently rely on a
+        # never-to-arrive on_chain_end.
+        handler = _AgentGuardCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
+        run_id = uuid.uuid4()
+        handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
+
+        with patch("trellar.agent_loop.evaluate_confidence") as mock_eval:
+            handler.on_chain_error(RuntimeError("boom"), run_id=run_id, parent_run_id=None)
+
+        # Auto-evaluate is an on_chain_end-only concern; it must not fire here.
+        mock_eval.assert_not_called()
+        assert _current_callback.get() is None

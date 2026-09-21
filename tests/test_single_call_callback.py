@@ -201,3 +201,81 @@ class TestAutoEvaluateTrigger:
             assert handler.trellar_evaluate_error is boom
         finally:
             _current_callback.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# on_llm_end / on_llm_error — _current_callback release (root run only)
+#
+# Local equivalent of _AgentGuardCallback's on_chain_end/on_chain_error
+# release: on_llm_start/on_chat_model_start register the handler, and
+# whichever of on_llm_end / on_llm_error fires next (mutually exclusive per
+# run_id) must release it.
+# ---------------------------------------------------------------------------
+
+class TestCurrentCallbackReleaseOnLlmEnd:
+    def test_root_llm_end_clears_current_callback(self, single_call_handler):
+        run_id = uuid.uuid4()
+        single_call_handler.on_chat_model_start({"kwargs": {"model": "m"}}, [[]], run_id=run_id, parent_run_id=None)
+        assert _current_callback.get() is single_call_handler
+
+        single_call_handler.on_llm_end(make_llm_result(message=make_ai_message("hi")), run_id=run_id, parent_run_id=None)
+
+        assert _current_callback.get() is None
+
+    def test_root_llm_end_does_not_clobber_a_different_active_handler(self):
+        # Defends the `is self` identity guard: if something else has since
+        # become the active handler, this handler's own root on_llm_end must
+        # not blindly clear/overwrite that registration.
+        outer_token = _current_callback.set(None)
+        try:
+            handler = _SingleCallGuardCallback(agent_name="a")
+            run_id = uuid.uuid4()
+            handler.on_chat_model_start({"kwargs": {"model": "m"}}, [[]], run_id=run_id, parent_run_id=None)
+
+            other = _SingleCallGuardCallback(agent_name="b")
+            token = _current_callback.set(other)
+            try:
+                handler.on_llm_end(make_llm_result(message=make_ai_message("hi")), run_id=run_id, parent_run_id=None)
+                assert _current_callback.get() is other
+            finally:
+                _current_callback.reset(token)
+        finally:
+            _current_callback.reset(outer_token)
+
+
+class TestCurrentCallbackReleaseOnLlmError:
+    def test_root_llm_error_clears_current_callback(self, single_call_handler):
+        run_id = uuid.uuid4()
+        single_call_handler.on_chat_model_start({"kwargs": {"model": "m"}}, [[]], run_id=run_id, parent_run_id=None)
+
+        single_call_handler.on_llm_error(RuntimeError("boom"), run_id=run_id, parent_run_id=None)
+
+        assert _current_callback.get() is None
+
+    def test_non_root_llm_error_does_not_clear_current_callback(self, single_call_handler):
+        run_id = uuid.uuid4()
+        single_call_handler.on_chat_model_start({"kwargs": {"model": "m"}}, [[]], run_id=run_id, parent_run_id=None)
+
+        single_call_handler.on_llm_error(RuntimeError("boom"), run_id=uuid.uuid4(), parent_run_id=run_id)
+
+        assert _current_callback.get() is single_call_handler
+
+    def test_on_llm_end_never_fires_for_a_call_that_errored(self):
+        # Regression guard mirroring the graph guard's equivalent: on_llm_end
+        # and on_llm_error are mutually exclusive per run_id, so a crash must
+        # go through the error-path release, not rely on a never-to-arrive
+        # on_llm_end / _auto_evaluate() call.
+        token = _current_callback.set(None)
+        try:
+            handler = _SingleCallGuardCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
+            run_id = uuid.uuid4()
+            handler.on_chat_model_start({"kwargs": {"model": "m"}}, [[]], run_id=run_id, parent_run_id=None)
+
+            with patch("trellar.agent_loop.evaluate_confidence") as mock_eval:
+                handler.on_llm_error(RuntimeError("boom"), run_id=run_id, parent_run_id=None)
+
+            mock_eval.assert_not_called()
+            assert handler.trellar_evaluate_result is None
+            assert _current_callback.get() is None
+        finally:
+            _current_callback.reset(token)

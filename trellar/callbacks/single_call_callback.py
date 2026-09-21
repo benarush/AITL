@@ -61,6 +61,7 @@ class _SingleCallGuardCallback(_AgentGuardCallback):
         self._step = 0
         self._run_registry = {}
         self._pending_llm_tool_calls = []
+        self.available_tools = {}
         self._evaluated = False
         self.trellar_evaluate_result = None
         self.trellar_evaluate_error = None
@@ -104,6 +105,28 @@ class _SingleCallGuardCallback(_AgentGuardCallback):
         super().on_llm_end(response, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
         if parent_run_id is None:
             self._auto_evaluate()
+            # Release the slot so the next top-level call (e.g. the next task
+            # picked up by a reused Celery worker process) starts from a
+            # clean ContextVar instead of inheriting this run's handler.
+            # Guarded by identity in case something else already replaced us.
+            if _current_callback.get() is self:
+                _current_callback.set(None)
+
+    def on_llm_error(
+        self,
+        error: BaseException,
+        *,
+        run_id: uuid.UUID,
+        parent_run_id: Optional[uuid.UUID] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().on_llm_error(error, run_id=run_id, parent_run_id=parent_run_id, **kwargs)
+        if parent_run_id is None:
+            # Root call failing — on_llm_end will never fire for this run_id
+            # (they are mutually exclusive), so release the slot here too.
+            # Guarded by identity in case something else already replaced us.
+            if _current_callback.get() is self:
+                _current_callback.set(None)
 
     def _auto_evaluate(self) -> None:
         """Local equivalent of _maybe_auto_evaluate; stores the outcome on

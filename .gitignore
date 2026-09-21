@@ -29,3 +29,6 @@ act.png
 
 # Pycharm
 .idea/
+
+# Docker
+.dockerignore

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import uuid
@@ -107,6 +108,21 @@ def _extract_model_name(serialized: dict[str, Any]) -> Optional[str]:
     return name
 
 
+def _hash_tools(tools: list[Any]) -> str:
+    """Stable content hash for a bound tool schema list.
+
+    Used as the key for ``_AgentGuardCallback.available_tools`` (so the exact
+    same toolset bound repeatedly across turns/nodes collapses to one entry)
+    and stamped onto the matching ``on_chat_model_start`` event so the backend
+    can correlate the declared toolset back to whichever agent/LLM-call node
+    actually bound it — see that event's ``node_name`` resolution in
+    aitl_fastapi's ``NetworkHandler._build_network_agents``. Opaque and only
+    ever compared for equality downstream, never recomputed independently.
+    """
+    canonical = json.dumps(tools, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
 class _AgentGuardCallback(BaseCallbackHandler):
     """Internal LangChain callback handler that tracks agent lifecycle events.
 
@@ -126,7 +142,9 @@ class _AgentGuardCallback(BaseCallbackHandler):
     * ``parent_run_id``– direct parent run (``None`` for the root)
     * ``node_name``    – human-readable name of the node/chain/tool/model
     * ``node_type``    – ``"llm"``, ``"tool"``, or ``"chain"``
-    * extra payload fields depending on the event type
+    * extra payload fields depending on the event type, notably
+      ``is_mcp_tool`` (bool) on ``on_tool_end`` events — see
+      :meth:`_is_mcp_tool_output` for what this does and does not detect.
     """
 
     # Maps the LangChain message `type` attribute to a human-readable prefix.
@@ -156,6 +174,37 @@ class _AgentGuardCallback(BaseCallbackHandler):
                     content = str(content)
             return f"{prefix}: {content}"
         return str(msg)
+
+    @staticmethod
+    def _is_mcp_tool_output(output: Any) -> bool:
+        """Detect whether a tool's output came from a langchain-mcp-adapters tool.
+
+        ``langchain_mcp_adapters.tools.convert_mcp_tool_to_langchain_tool()``
+        always builds MCP-derived tools with
+        ``response_format="content_and_artifact"`` and populates the
+        resulting ``ToolMessage.artifact`` with the library's
+        ``MCPToolArtifact`` TypedDict shape: ``{"structured_content": <dict>}``.
+
+        A plain local ``@tool`` function defaults to
+        ``response_format="content"`` and never sets ``.artifact`` at all (it
+        stays ``None``) unless the tool author goes out of their way to opt
+        into artifacts using that exact same key — which essentially never
+        happens by accident.
+
+        This makes the presence of that specific key a reliable, generic
+        fingerprint of langchain-mcp-adapters usage — present automatically on
+        every MCP tool call regardless of transport (stdio, SSE, streamable
+        HTTP), with zero cooperation needed from the tool author or graph
+        author.
+
+        Caveat: this specifically detects tools loaded via
+        langchain-mcp-adapters (the dominant, standard way to bridge MCP
+        tools into LangChain/LangGraph). It will NOT detect a hand-rolled MCP
+        client that talks to an MCP server without going through this
+        library's conversion helpers.
+        """
+        artifact = getattr(output, "artifact", None)
+        return isinstance(artifact, dict) and "structured_content" in artifact
 
     @staticmethod
     def _serialize_messages(messages: list[Any]) -> list[str]:
@@ -212,6 +261,17 @@ class _AgentGuardCallback(BaseCallbackHandler):
         #   {"event": <recorded event dict>, "parent_run_id": str | None,
         #    "remaining_tools": [tool names...]}
         self._pending_llm_tool_calls: list[dict[str, Any]] = []
+        # tools_hash -> tool schemas, captured from on_chat_model_start's
+        # invocation_params. Keyed by a content hash of the tool list (see
+        # _hash_tools) rather than the model name, since the model string
+        # lives in a different namespace than the node_name the backend uses
+        # to attribute this call to a SubAgent — the same hash is stamped
+        # onto the matching on_chat_model_start event (below) so the backend
+        # can correlate a declared toolset back to its real caller. One entry
+        # per distinct toolset for the whole run (not per LLM call), so an
+        # identical bound toolset isn't repeated/duplicated on every turn.
+        # Reset per top-level invocation alongside the other run state below.
+        self.available_tools: dict[str, list[Any]] = {}
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -311,6 +371,12 @@ class _AgentGuardCallback(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         model = _extract_model_name(serialized)
+        tools = kwargs.get("invocation_params", {}).get("tools")
+        tools_hash: Optional[str] = None
+        if tools:
+            jsonable_tools = self._to_jsonable(tools)
+            tools_hash = _hash_tools(jsonable_tools)
+            self.available_tools[tools_hash] = jsonable_tools
         self._register(run_id, model, "llm")
 
         # messages is list[list[BaseMessage]] — one inner list per prompt batch item.
@@ -322,6 +388,7 @@ class _AgentGuardCallback(BaseCallbackHandler):
             parent_run_id,
             model=model,
             input=llm_input,
+            tools_hash=tools_hash,
         )
 
     def on_llm_end(
@@ -463,8 +530,13 @@ class _AgentGuardCallback(BaseCallbackHandler):
         parent_run_id: Optional[uuid.UUID] = None,
         **kwargs: Any,
     ) -> None:
+        # Must run BEFORE serialization: _serialize_message_obj only looks at
+        # `.type`/`.content` and would otherwise silently drop `.artifact`.
+        is_mcp_tool = self._is_mcp_tool_output(output)
         serialized_output = self._serialize_message_obj(output)
-        self._record("on_tool_end", run_id, parent_run_id, output=serialized_output)
+        self._record(
+            "on_tool_end", run_id, parent_run_id, output=serialized_output, is_mcp_tool=is_mcp_tool
+        )
         tool_name = self._run_registry.get(str(run_id), {}).get("name")
         self._attach_tool_response_to_llm(tool_name, serialized_output, parent_run_id)
 
@@ -542,6 +614,7 @@ class _AgentGuardCallback(BaseCallbackHandler):
             self._step = 0
             self._run_registry = {}
             self._pending_llm_tool_calls = []
+            self.available_tools = {}
             self._evaluated = False
             # Self-register so evaluate_confidence() can pick us up automatically.
             _current_callback.set(self)
@@ -590,13 +663,15 @@ class _AgentGuardCallback(BaseCallbackHandler):
         if isinstance(outputs, dict) and "messages" in outputs:
             outputs = {**outputs, "messages": self._serialize_messages(outputs["messages"])}
         self._record("on_chain_end", run_id, parent_run_id, outputs=self._to_jsonable(outputs))
-        # Do NOT clear _current_callback here. ContextVar is already scoped per
-        # asyncio Task / thread, so it never leaks across concurrent runs.
-        # Clearing it before graph.invoke() returns would make evaluate_confidence()
-        # fail when called after the graph completes.
         if parent_run_id is None:
             # Root run ending — the whole graph flow has reached its end.
             self._maybe_auto_evaluate()
+            # Release the slot so the next top-level run (e.g. the next task
+            # picked up by a reused Celery worker process) starts from a
+            # clean ContextVar instead of inheriting this run's handler.
+            # Guarded by identity in case something else already replaced us.
+            if _current_callback.get() is self:
+                _current_callback.set(None)
 
     def _maybe_auto_evaluate(self) -> None:
         """Auto-trigger evaluate_confidence() per self.observability_mode.
@@ -623,6 +698,12 @@ class _AgentGuardCallback(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         self._record("on_chain_error", run_id, parent_run_id, error=str(error))
+        if parent_run_id is None:
+            # Root run failing — on_chain_end will never fire for this run_id
+            # (they are mutually exclusive), so release the slot here too.
+            # Guarded by identity in case something else already replaced us.
+            if _current_callback.get() is self:
+                _current_callback.set(None)
 
     # ------------------------------------------------------------------
     # Context serialization
@@ -673,7 +754,12 @@ class _AgentGuardCallback(BaseCallbackHandler):
                 lines.append(f"  input: {_compact_json(event.get('input', {}))}")
 
             elif event_name == "on_tool_end":
-                lines.append(f"  output: {_compact_json(event.get('output', ''))}")
+                # Surface the MCP fingerprint in the narrative sent to the LLM
+                # confidence evaluator: a tool call that went through an
+                # external MCP provider is meaningfully different provenance
+                # than a local in-process function, so this is signal, not noise.
+                via_mcp = " (via MCP)" if event.get("is_mcp_tool") else ""
+                lines.append(f"  output{via_mcp}: {_compact_json(event.get('output', ''))}")
 
             elif event_name == "on_chain_start":
                 lines.append(f"  inputs: {_compact_json(event.get('inputs', {}))}")
