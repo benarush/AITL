@@ -280,7 +280,7 @@ class TestOnChatModelStart:
         )
         assert active_handler._run_registry[str(run_id)]["type"] == "llm"
 
-    def test_records_available_tools_by_model(self, active_handler):
+    def test_records_available_tools_keyed_by_content_hash(self, active_handler):
         run_id = uuid.uuid4()
         tools = [{"name": "get_weather", "description": "Look up the weather"}]
         active_handler.on_chat_model_start(
@@ -288,7 +288,30 @@ class TestOnChatModelStart:
             run_id=run_id, parent_run_id=None,
             invocation_params={"tools": tools},
         )
-        assert active_handler.available_tools == {"gpt-4o": tools}
+        # Keyed by content hash, not "gpt-4o" — the model string lives in a
+        # different namespace than the node_name the backend attributes this
+        # call to, so it can't be used to correlate the two later.
+        assert list(active_handler.available_tools.values()) == [tools]
+        (tools_hash,) = active_handler.available_tools.keys()
+        assert tools_hash and tools_hash != "gpt-4o"
+        # The same hash must be stamped onto the recorded event so the backend
+        # can carry it through to the AgentData this call resolves to.
+        assert active_handler.events[-1]["tools_hash"] == tools_hash
+
+    def test_identical_toolset_across_calls_dedupes_to_one_entry(self, active_handler):
+        tools = [{"name": "get_weather", "description": "Look up the weather"}]
+        active_handler.on_chat_model_start(
+            {"kwargs": {"model": "gpt-4o"}}, [[HumanMessage(content="turn 1")]],
+            run_id=uuid.uuid4(), parent_run_id=None,
+            invocation_params={"tools": tools},
+        )
+        active_handler.on_chat_model_start(
+            {"kwargs": {"model": "gemini-2.5-flash"}}, [[HumanMessage(content="turn 2")]],
+            run_id=uuid.uuid4(), parent_run_id=None,
+            invocation_params={"tools": tools},
+        )
+        assert len(active_handler.available_tools) == 1
+        assert active_handler.events[-2]["tools_hash"] == active_handler.events[-1]["tools_hash"]
 
     def test_no_tools_leaves_available_tools_empty(self, active_handler):
         run_id = uuid.uuid4()
@@ -297,6 +320,7 @@ class TestOnChatModelStart:
             run_id=run_id, parent_run_id=None,
         )
         assert active_handler.available_tools == {}
+        assert active_handler.events[-1]["tools_hash"] is None
 
 
 # ---------------------------------------------------------------------------

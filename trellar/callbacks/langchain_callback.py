@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import uuid
@@ -105,6 +106,21 @@ def _extract_model_name(serialized: dict[str, Any]) -> Optional[str]:
         # Fall back to the class name so we always have something.
         name = serialized.get("name")
     return name
+
+
+def _hash_tools(tools: list[Any]) -> str:
+    """Stable content hash for a bound tool schema list.
+
+    Used as the key for ``_AgentGuardCallback.available_tools`` (so the exact
+    same toolset bound repeatedly across turns/nodes collapses to one entry)
+    and stamped onto the matching ``on_chat_model_start`` event so the backend
+    can correlate the declared toolset back to whichever agent/LLM-call node
+    actually bound it — see that event's ``node_name`` resolution in
+    aitl_fastapi's ``NetworkHandler._build_network_agents``. Opaque and only
+    ever compared for equality downstream, never recomputed independently.
+    """
+    canonical = json.dumps(tools, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
 class _AgentGuardCallback(BaseCallbackHandler):
@@ -245,11 +261,16 @@ class _AgentGuardCallback(BaseCallbackHandler):
         #   {"event": <recorded event dict>, "parent_run_id": str | None,
         #    "remaining_tools": [tool names...]}
         self._pending_llm_tool_calls: list[dict[str, Any]] = []
-        # model name -> tool schemas bound to that model, captured from
-        # on_chat_model_start's invocation_params. One entry per distinct model
-        # for the whole run (not per LLM call), so the same bound tools aren't
-        # repeated on every turn. Reset per top-level invocation alongside the
-        # other run state below.
+        # tools_hash -> tool schemas, captured from on_chat_model_start's
+        # invocation_params. Keyed by a content hash of the tool list (see
+        # _hash_tools) rather than the model name, since the model string
+        # lives in a different namespace than the node_name the backend uses
+        # to attribute this call to a SubAgent — the same hash is stamped
+        # onto the matching on_chat_model_start event (below) so the backend
+        # can correlate a declared toolset back to its real caller. One entry
+        # per distinct toolset for the whole run (not per LLM call), so an
+        # identical bound toolset isn't repeated/duplicated on every turn.
+        # Reset per top-level invocation alongside the other run state below.
         self.available_tools: dict[str, list[Any]] = {}
 
     # ------------------------------------------------------------------
@@ -351,8 +372,11 @@ class _AgentGuardCallback(BaseCallbackHandler):
     ) -> None:
         model = _extract_model_name(serialized)
         tools = kwargs.get("invocation_params", {}).get("tools")
-        if tools and model:
-            self.available_tools[model] = self._to_jsonable(tools)
+        tools_hash: Optional[str] = None
+        if tools:
+            jsonable_tools = self._to_jsonable(tools)
+            tools_hash = _hash_tools(jsonable_tools)
+            self.available_tools[tools_hash] = jsonable_tools
         self._register(run_id, model, "llm")
 
         # messages is list[list[BaseMessage]] — one inner list per prompt batch item.
@@ -364,6 +388,7 @@ class _AgentGuardCallback(BaseCallbackHandler):
             parent_run_id,
             model=model,
             input=llm_input,
+            tools_hash=tools_hash,
         )
 
     def on_llm_end(

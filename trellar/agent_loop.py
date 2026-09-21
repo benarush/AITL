@@ -204,11 +204,13 @@ def evaluate_confidence(
         "agent_name": callback.agent_name,
         "observability_call": _observability_call,
         "single_call": getattr(callback, "is_single_call", False),
-        # One entry per distinct model bound during this run, not per LLM call —
-        # see _AgentGuardCallback.available_tools.
+        # One entry per distinct toolset bound during this run, keyed by a
+        # content hash (not the model name) so the backend can correlate it
+        # back to the exact SubAgent that declared it — see
+        # _AgentGuardCallback.available_tools / _hash_tools.
         "available_tools": [
-            {"model": model, "tools": tools}
-            for model, tools in callback.available_tools.items()
+            {"tools_hash": tools_hash, "tools": tools}
+            for tools_hash, tools in callback.available_tools.items()
         ],
     }
 
