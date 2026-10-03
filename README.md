@@ -85,6 +85,24 @@ graph("Find me something to report on")
 
 Call `evaluate_confidence()` from inside the run (a graph node or a tool), exactly as with LangChain. `ObservabilityMode` works the same way. See `orchestrations_examples/our_lab_with_aviran/car_stocks_buy_mcp_celery.py/car_stocks_buy_from_remote_provider_orchestration_strands.py` for a full example.
 
+### `get_strands_single_call_guard`
+
+For one Agent called once (no Graph/Swarm). The run is over when the call returns, so use `ObservabilityMode.ALWAYS` (or `IF_NOT_EVALUATED`) and read the result off the guard:
+
+```python
+from strands import Agent
+from trellar import get_strands_single_call_guard, ObservabilityMode
+
+guard = get_strands_single_call_guard("faq-agent", ObservabilityMode.ALWAYS)
+agent = Agent(name="faq_agent", hooks=[guard])
+agent("What time does the office open?")
+
+result = guard.trellar_evaluate_result   # AgentLoopResult, or None
+error = guard.trellar_evaluate_error     # the exception, if the auto-triggered call failed
+```
+
+Requests are marked `single_call: true` in the payload. Not covered: `agent.structured_output()` and calling a Strands `Model` directly — Strands fires no model-call hooks for them. See `orchestrations_examples/our_lab_with_aviran/single_llm_agent/simple_llm_call_strands.py`.
+
 ---
 
 ## Where to call `evaluate_confidence`

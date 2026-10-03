@@ -6,98 +6,12 @@ from typing import Any, Optional
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 
-from .._context import _current_callback
-from ..agent_loop import ObservabilityMode
-from ._common import build_context, compact_json as _compact_json, hash_tools as _hash_tools
+from ..._context import _current_callback
+from ...agent_loop import ObservabilityMode
+from .._common import build_context, compact_json as _compact_json, hash_tools as _hash_tools
+from .utils import _content_to_str, _extract_llm_input, _extract_model_name
 
 logger = logging.getLogger(__name__)
-
-
-def _serialize_message(msg: Any) -> dict[str, Any]:
-    """Serialize a LangChain BaseMessage to a plain dict (role + content + extras)."""
-    if not (hasattr(msg, "type") and hasattr(msg, "content")):
-        return {"raw": str(msg)}
-
-    result: dict[str, Any] = {"role": msg.type, "content": msg.content}
-
-    additional = getattr(msg, "additional_kwargs", {})
-    if additional:
-        # Capture tool_calls, function_call, etc.
-        result["additional_kwargs"] = additional
-
-    tool_calls = getattr(msg, "tool_calls", None)
-    if tool_calls:
-        result["tool_calls"] = tool_calls
-
-    return result
-
-
-def _content_to_str(content: Any) -> str:
-    """Convert a message content value to a plain string.
-
-    LangChain message content can be a str, a list of dicts (multimodal),
-    or any other JSON-serializable value for structured outputs.
-    """
-    if isinstance(content, str):
-        return content
-    try:
-        return json.dumps(content, ensure_ascii=False, default=str)
-    except Exception:
-        return str(content)
-
-
-def _extract_llm_input(messages: list[Any]) -> dict[str, Optional[str]]:
-    """Extract structured system/human fields from a list of LangChain messages.
-
-    Returns a dict with:
-    - ``system``: content of the first SystemMessage, or ``None``
-    - ``human``: content of the last HumanMessage, or ``None``
-
-    For multi-turn conversation histories the *last* human turn is used as the
-    active prompt because that is what the LLM is responding to.
-
-    Handles both LangChain ``BaseMessage`` objects (standard) and plain dicts
-    (e.g. when Phoenix auto-instrumentation serialises messages before passing
-    them to the callback).  Also accepts ``"user"`` as a synonym for ``"human"``
-    to cover OpenAI-style role names.
-    """
-    system: Optional[str] = None
-    human: Optional[str] = None
-
-    for msg in messages:
-        if hasattr(msg, "type") and hasattr(msg, "content"):
-            # Standard LangChain BaseMessage object
-            role = str(msg.type).lower()
-            content = _content_to_str(msg.content)
-        elif isinstance(msg, dict):
-            # Serialised dict — may use "role" (OpenAI/Phoenix) or "type" (LangChain)
-            role = str(msg.get("role") or msg.get("type") or "").lower()
-            content = _content_to_str(msg.get("content") or "")
-        else:
-            continue
-
-        if role == "system" and system is None:
-            system = content
-        elif role in ("human", "user"):
-            # "user" is the OpenAI/Phoenix style; keep overwriting so the last wins.
-            human = content
-
-    return {"system": system, "human": human}
-
-
-def _extract_model_name(serialized: dict[str, Any]) -> Optional[str]:
-    """
-    Pull the real model identifier out of a serialized LLM dict.
-
-    LangChain puts the *class* name in ``serialized["name"]`` (e.g. "ChatOpenAI")
-    but the actual model string (e.g. "gpt-4o") lives inside ``kwargs``.
-    """
-    kwargs = serialized.get("kwargs", {})
-    name = kwargs.get("model_name") or kwargs.get("model")
-    if not name:
-        # Fall back to the class name so we always have something.
-        name = serialized.get("name")
-    return name
 
 
 class _AgentGuardCallback(BaseCallbackHandler):
@@ -660,7 +574,7 @@ class _AgentGuardCallback(BaseCallbackHandler):
             return
         if self.observability_mode is ObservabilityMode.IF_NOT_EVALUATED and self._evaluated:
             return
-        from ..agent_loop import evaluate_confidence
+        from ...agent_loop import evaluate_confidence
         try:
             evaluate_confidence(_observability_call=True)
         except Exception:

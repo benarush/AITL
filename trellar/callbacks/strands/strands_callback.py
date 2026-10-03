@@ -31,65 +31,16 @@ from strands.hooks import (
 )
 from strands.tools.mcp.mcp_agent_tool import MCPAgentTool
 
-from .._context import _current_callback
-from ..agent_loop import ObservabilityMode
-from ._common import build_context, compact_json, hash_tools, to_jsonable
+from ..._context import _current_callback
+from ...agent_loop import ObservabilityMode
+from .._common import build_context, compact_json, hash_tools, to_jsonable
+from .utils import _last_user_text, _model_name, _openai_tools, _text_of_blocks
 
 logger = logging.getLogger(__name__)
 
 # Innermost open run id. Contextvars are copied into Strands' threads/tasks,
 # so parallel graph branches and nested agents each see the right parent.
 _current_run: ContextVar[Optional[str]] = ContextVar("trellar_strands_current_run", default=None)
-
-
-def _text_of_blocks(blocks: Any) -> str:
-    """Join the text / json content blocks of a Strands message or tool result."""
-    parts: list[str] = []
-    for block in blocks or []:
-        if not isinstance(block, dict):
-            continue
-        if "text" in block:
-            parts.append(block["text"])
-        elif "json" in block:
-            parts.append(compact_json(block["json"]))
-    return "\n".join(parts)
-
-
-def _last_user_text(messages: Any) -> Optional[str]:
-    """Text of the last user message (tool-result-only user turns are skipped)."""
-    for msg in reversed(messages or []):
-        if isinstance(msg, dict) and msg.get("role") == "user":
-            text = _text_of_blocks(msg.get("content"))
-            if text:
-                return text
-    return None
-
-
-def _model_name(agent: Any) -> str:
-    """Real model id (e.g. 'gemini-2.5-flash-lite'); class name as fallback."""
-    try:
-        config = agent.model.get_config() or {}
-        name = config.get("model_id") or config.get("model")
-    except Exception:
-        name = None
-    return str(name or type(agent.model).__name__)
-
-
-def _openai_tools(agent: Any) -> list[dict[str, Any]]:
-    """Agent's tools in the OpenAI function shape the backend expects."""
-    tools = []
-    for spec in agent.tool_registry.get_all_tools_config().values():
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": spec["name"],
-                    "description": spec.get("description", ""),
-                    "parameters": (spec.get("inputSchema") or {}).get("json", {}),
-                },
-            }
-        )
-    return to_jsonable(tools)
 
 
 class _StrandsGuardCallback(HookProvider):
@@ -200,7 +151,7 @@ class _StrandsGuardCallback(HookProvider):
             return
         if self.observability_mode is ObservabilityMode.IF_NOT_EVALUATED and self._evaluated:
             return
-        from ..agent_loop import evaluate_confidence
+        from ...agent_loop import evaluate_confidence
 
         try:
             evaluate_confidence(_observability_call=True)
@@ -376,3 +327,36 @@ class _StrandsGuardCallback(HookProvider):
     def build_context(self) -> str:
         """Serialize collected events into a step-by-step string for the backend."""
         return build_context(self.events, self.trace_id)
+
+
+class _StrandsSingleCallGuardCallback(_StrandsGuardCallback):
+    """Guard for one Agent called once (no Graph/Swarm).
+
+    Not public API; use :func:`trellar.get_strands_single_call_guard`. The base
+    guard already treats a bare Agent call as a root run, so this only adds the
+    ``single_call`` payload flag and keeps the auto-evaluate outcome (the run is
+    over by the time the caller gets control, so it can't be fetched manually).
+    """
+
+    is_single_call = True
+
+    def _reset(self, root_run_id: Optional[str]) -> None:
+        super()._reset(root_run_id)
+        # Outcome of the auto-triggered evaluation; cleared on every new run.
+        self.trellar_evaluate_result: Optional[Any] = None
+        self.trellar_evaluate_error: Optional[BaseException] = None
+
+    def _maybe_auto_evaluate(self) -> None:
+        """Like the base version, but stores the result/error on the guard."""
+        if self.observability_mode is ObservabilityMode.NONE:
+            return
+        if self.observability_mode is ObservabilityMode.IF_NOT_EVALUATED and self._evaluated:
+            return
+        from ...agent_loop import evaluate_confidence
+
+        try:
+            self.trellar_evaluate_result = evaluate_confidence(_observability_call=True)
+            self.trellar_evaluate_error = None
+        except Exception as exc:
+            self.trellar_evaluate_error = exc
+            logger.warning("Auto-triggered evaluate_confidence() failed", exc_info=True)

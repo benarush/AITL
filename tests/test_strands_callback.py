@@ -17,7 +17,12 @@ from strands.multiagent import GraphBuilder  # noqa: E402
 from strands.telemetry.metrics import EventLoopMetrics  # noqa: E402
 from strands.tools.mcp.mcp_agent_tool import MCPAgentTool  # noqa: E402
 
-from trellar import ObservabilityMode, evaluate_confidence, get_strands_guard  # noqa: E402
+from trellar import (  # noqa: E402
+    ObservabilityMode,
+    evaluate_confidence,
+    get_strands_guard,
+    get_strands_single_call_guard,
+)
 from trellar._context import _current_callback  # noqa: E402
 
 from tests.backend_schema import AgentLoopRequest  # noqa: E402
@@ -447,3 +452,56 @@ class TestObservabilityMode:
         with patch("trellar.agent_loop.requests.post", side_effect=RuntimeError("backend down")):
             result = make_agent(guard, [text_turn("hi")])("go")
         assert "hi" in str(result)
+
+
+# ---------------------------------------------------------------------------
+# Single call (one Agent, no Graph)
+# ---------------------------------------------------------------------------
+
+class TestSingleCall:
+    def test_payload_flag_and_backend_schema(self, mock_post):
+        guard = get_strands_single_call_guard("t", ObservabilityMode.ALWAYS)
+        make_agent(guard, [text_turn("hi")])("go")
+
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["single_call"] is True
+        AgentLoopRequest(**payload)
+
+    def test_regular_guard_is_not_single_call(self, mock_post):
+        guard = get_strands_guard("t", ObservabilityMode.ALWAYS)
+        make_agent(guard, [text_turn("hi")])("go")
+        assert mock_post.call_args.kwargs["json"]["single_call"] is False
+
+    def test_result_is_stored_on_guard(self, mock_post):
+        guard = get_strands_single_call_guard("t", ObservabilityMode.ALWAYS)
+        make_agent(guard, [text_turn("hi")])("go")
+
+        assert guard.trellar_evaluate_result.score == 8
+        assert guard.trellar_evaluate_error is None
+        assert _current_callback.get() is None  # released after the call
+
+    def test_backend_error_is_stored_not_raised(self):
+        guard = get_strands_single_call_guard("t", ObservabilityMode.ALWAYS)
+        with patch("trellar.agent_loop.requests.post", side_effect=RuntimeError("backend down")):
+            make_agent(guard, [text_turn("hi")])("go")
+
+        assert guard.trellar_evaluate_result is None
+        assert isinstance(guard.trellar_evaluate_error, RuntimeError)
+
+    def test_second_call_resets_result(self, mock_post):
+        guard = get_strands_single_call_guard("t", ObservabilityMode.ALWAYS)
+        make_agent(guard, [text_turn("hi")])("go")
+        first = guard.trellar_evaluate_result
+
+        # Second run fails: the old result must not leak through.
+        with patch("trellar.agent_loop.requests.post", side_effect=RuntimeError("down")):
+            make_agent(guard, [text_turn("hi")])("go again")
+        assert first is not None
+        assert guard.trellar_evaluate_result is None
+
+    def test_none_mode_does_not_evaluate(self, mock_post):
+        guard = get_strands_single_call_guard("t")
+        make_agent(guard, [text_turn("hi")])("go")
+
+        mock_post.assert_not_called()
+        assert guard.trellar_evaluate_result is None

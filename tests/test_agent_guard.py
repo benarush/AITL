@@ -7,7 +7,7 @@ import pytest
 
 from trellar import evaluate_confidence, get_agent_guard
 from trellar._context import _current_callback
-from trellar.callbacks.langchain_callback import _AgentGuardCallback
+from trellar.callbacks.langchain.langchain_callback import _AgentGuardCallback
 
 
 # ---------------------------------------------------------------------------

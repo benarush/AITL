@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from trellar import ObservabilityMode
 from trellar._context import _current_callback
-from trellar.callbacks.langchain_callback import _AgentGuardCallback
+from trellar.callbacks.langchain.langchain_callback import _AgentGuardCallback
 
 from tests.factories import FakeGeneration, FakeMessage, FakeResponse, make_ai_message, make_llm_result
 
