@@ -11,8 +11,9 @@ from . import settings
 from ._context import _current_callback
 
 if TYPE_CHECKING:
-    from .callbacks.langchain_callback import _AgentGuardCallback
-    from .callbacks.single_call_callback import _SingleCallGuardCallback
+    from .callbacks.langchain.langchain_callback import _AgentGuardCallback
+    from .callbacks.langchain.single_langchain_callback import _SingleCallGuardCallback
+    from .callbacks.strands.strands_callback import _StrandsGuardCallback, _StrandsSingleCallGuardCallback
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ def get_agent_guard(
     Returns:
         An internal callback handler bound to the given agent name.
     """
-    from .callbacks.langchain_callback import _AgentGuardCallback
+    from .callbacks.langchain.langchain_callback import _AgentGuardCallback
     return _AgentGuardCallback(agent_name=agent_name, observability_mode=observability_mode)
 
 
@@ -129,8 +130,62 @@ def get_single_call_guard(
         ``trellar_evaluate_result``/``trellar_evaluate_error`` for reading the outcome of an
         auto-triggered evaluation.
     """
-    from .callbacks.single_call_callback import _SingleCallGuardCallback
+    from .callbacks.langchain.single_langchain_callback import _SingleCallGuardCallback
     return _SingleCallGuardCallback(agent_name=agent_name, observability_mode=observability_mode)
+
+
+def get_strands_guard(
+    agent_name: str,
+    observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+) -> "_StrandsGuardCallback":
+    """Create a hook provider that identifies a Strands Agents network to Trellar.
+
+    Requires ``pip install "trellar[strands]"``. Register the same guard on every
+    Agent and on the Graph/Swarm (so the whole run is one trace)::
+
+        guard = get_strands_guard("research-agent")
+
+        agent = Agent(name="searcher", hooks=[guard])
+        graph = GraphBuilder()...set_hook_providers([guard]).build()
+
+    Give every agent a stable ``name``: it is how the backend tells agents apart.
+    As with :func:`get_agent_guard`, call :func:`evaluate_confidence` from inside
+    the run (e.g. a graph node or a tool), not after it returns.
+
+    Args:
+        agent_name: Unique, stable name for this agent network.
+        observability_mode: See :class:`ObservabilityMode`.
+    """
+    from .callbacks.strands.strands_callback import _StrandsGuardCallback
+    return _StrandsGuardCallback(agent_name=agent_name, observability_mode=observability_mode)
+
+
+def get_strands_single_call_guard(
+    agent_name: str,
+    observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+) -> "_StrandsSingleCallGuardCallback":
+    """Create a hook provider for one Strands Agent called once (no Graph/Swarm).
+
+    Requires ``pip install "trellar[strands]"``. The run is over when the call
+    returns, so a manual :func:`evaluate_confidence` is not possible. Use
+    ``ObservabilityMode.ALWAYS`` (or ``IF_NOT_EVALUATED``) and read the outcome
+    off the guard::
+
+        guard = get_strands_single_call_guard("faq-agent", ObservabilityMode.ALWAYS)
+        agent = Agent(name="faq", hooks=[guard])
+        agent("What time does the office open?")
+        result = guard.trellar_evaluate_result
+
+    Requests are marked ``single_call: true`` in the payload. Not covered:
+    ``agent.structured_output()`` and calling a Strands ``Model`` directly
+    (Strands fires no model-call hooks for them).
+
+    Args:
+        agent_name: Unique, stable name for this agent.
+        observability_mode: See :class:`ObservabilityMode`.
+    """
+    from .callbacks.strands.strands_callback import _StrandsSingleCallGuardCallback
+    return _StrandsSingleCallGuardCallback(agent_name=agent_name, observability_mode=observability_mode)
 
 
 def evaluate_confidence(

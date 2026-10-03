@@ -1,5 +1,5 @@
 """Unit tests for the module-level helper functions in
-trellar/callbacks/langchain_callback.py -- previously 0% covered.
+trellar/callbacks/langchain/utils -- previously 0% covered.
 """
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import json
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from trellar.callbacks.langchain_callback import (
-    _compact_json,
+from trellar.callbacks._common import compact_json as _compact_json
+from trellar.callbacks.langchain.utils import (
     _content_to_str,
     _extract_llm_input,
     _extract_model_name,

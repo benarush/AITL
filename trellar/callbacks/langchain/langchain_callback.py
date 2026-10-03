@@ -1,4 +1,3 @@
-import hashlib
 import json
 import logging
 import uuid
@@ -7,120 +6,12 @@ from typing import Any, Optional
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 
-from .._context import _current_callback
-from ..agent_loop import ObservabilityMode
+from ..._context import _current_callback
+from ...agent_loop import ObservabilityMode
+from .._common import build_context, compact_json as _compact_json, hash_tools as _hash_tools
+from .utils import _content_to_str, _extract_llm_input, _extract_model_name
 
 logger = logging.getLogger(__name__)
-
-
-def _serialize_message(msg: Any) -> dict[str, Any]:
-    """Serialize a LangChain BaseMessage to a plain dict (role + content + extras)."""
-    if not (hasattr(msg, "type") and hasattr(msg, "content")):
-        return {"raw": str(msg)}
-
-    result: dict[str, Any] = {"role": msg.type, "content": msg.content}
-
-    additional = getattr(msg, "additional_kwargs", {})
-    if additional:
-        # Capture tool_calls, function_call, etc.
-        result["additional_kwargs"] = additional
-
-    tool_calls = getattr(msg, "tool_calls", None)
-    if tool_calls:
-        result["tool_calls"] = tool_calls
-
-    return result
-
-
-def _content_to_str(content: Any) -> str:
-    """Convert a message content value to a plain string.
-
-    LangChain message content can be a str, a list of dicts (multimodal),
-    or any other JSON-serializable value for structured outputs.
-    """
-    if isinstance(content, str):
-        return content
-    try:
-        return json.dumps(content, ensure_ascii=False, default=str)
-    except Exception:
-        return str(content)
-
-
-def _extract_llm_input(messages: list[Any]) -> dict[str, Optional[str]]:
-    """Extract structured system/human fields from a list of LangChain messages.
-
-    Returns a dict with:
-    - ``system``: content of the first SystemMessage, or ``None``
-    - ``human``: content of the last HumanMessage, or ``None``
-
-    For multi-turn conversation histories the *last* human turn is used as the
-    active prompt because that is what the LLM is responding to.
-
-    Handles both LangChain ``BaseMessage`` objects (standard) and plain dicts
-    (e.g. when Phoenix auto-instrumentation serialises messages before passing
-    them to the callback).  Also accepts ``"user"`` as a synonym for ``"human"``
-    to cover OpenAI-style role names.
-    """
-    system: Optional[str] = None
-    human: Optional[str] = None
-
-    for msg in messages:
-        if hasattr(msg, "type") and hasattr(msg, "content"):
-            # Standard LangChain BaseMessage object
-            role = str(msg.type).lower()
-            content = _content_to_str(msg.content)
-        elif isinstance(msg, dict):
-            # Serialised dict — may use "role" (OpenAI/Phoenix) or "type" (LangChain)
-            role = str(msg.get("role") or msg.get("type") or "").lower()
-            content = _content_to_str(msg.get("content") or "")
-        else:
-            continue
-
-        if role == "system" and system is None:
-            system = content
-        elif role in ("human", "user"):
-            # "user" is the OpenAI/Phoenix style; keep overwriting so the last wins.
-            human = content
-
-    return {"system": system, "human": human}
-
-
-def _compact_json(value: Any) -> str:
-    """Render *value* as compact JSON, falling back to repr on failure."""
-    try:
-        return json.dumps(value, ensure_ascii=False, default=str)
-    except Exception:
-        return repr(value)
-
-
-def _extract_model_name(serialized: dict[str, Any]) -> Optional[str]:
-    """
-    Pull the real model identifier out of a serialized LLM dict.
-
-    LangChain puts the *class* name in ``serialized["name"]`` (e.g. "ChatOpenAI")
-    but the actual model string (e.g. "gpt-4o") lives inside ``kwargs``.
-    """
-    kwargs = serialized.get("kwargs", {})
-    name = kwargs.get("model_name") or kwargs.get("model")
-    if not name:
-        # Fall back to the class name so we always have something.
-        name = serialized.get("name")
-    return name
-
-
-def _hash_tools(tools: list[Any]) -> str:
-    """Stable content hash for a bound tool schema list.
-
-    Used as the key for ``_AgentGuardCallback.available_tools`` (so the exact
-    same toolset bound repeatedly across turns/nodes collapses to one entry)
-    and stamped onto the matching ``on_chat_model_start`` event so the backend
-    can correlate the declared toolset back to whichever agent/LLM-call node
-    actually bound it — see that event's ``node_name`` resolution in
-    aitl_fastapi's ``NetworkHandler._build_network_agents``. Opaque and only
-    ever compared for equality downstream, never recomputed independently.
-    """
-    canonical = json.dumps(tools, sort_keys=True, default=str)
-    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
 class _AgentGuardCallback(BaseCallbackHandler):
@@ -683,7 +574,7 @@ class _AgentGuardCallback(BaseCallbackHandler):
             return
         if self.observability_mode is ObservabilityMode.IF_NOT_EVALUATED and self._evaluated:
             return
-        from ..agent_loop import evaluate_confidence
+        from ...agent_loop import evaluate_confidence
         try:
             evaluate_confidence(_observability_call=True)
         except Exception:
@@ -710,66 +601,5 @@ class _AgentGuardCallback(BaseCallbackHandler):
     # ------------------------------------------------------------------
 
     def build_context(self) -> str:
-        """Serialize collected events into a structured string for the Trellar backend.
-
-        Produces a numbered, step-by-step narrative of the full agent run
-        (LLM calls, tool invocations, chain boundaries) suitable as the
-        ``context`` field of the evaluate_confidence request.
-        """
-        lines: list[str] = [
-            f"=== Agent Run Context ===",
-            f"Trace ID: {self.trace_id}",
-            f"Total steps: {len(self.events)}",
-            "",
-        ]
-
-        for event in self.events:
-            step = event.get("graph_order", "?")
-            event_name = event.get("event", "unknown")
-            node_name = event.get("node_name") or ""
-            node_type = event.get("node_type") or ""
-
-            header = f"[Step {step}] {event_name}"
-            if node_name:
-                header += f"  ({node_type}: {node_name})"
-            lines.append(header)
-
-            # Per-event payload rendering
-            if event_name in ("on_llm_start", "on_chat_model_start"):
-                inp = event.get("input", {})
-                if inp.get("system"):
-                    lines.append(f"  system: {inp['system']}")
-                if inp.get("human"):
-                    lines.append(f"  human: {inp['human']}")
-
-            elif event_name == "on_llm_end":
-                out = event.get("output", {})
-                usage = event.get("token_usage")
-                lines.append(f"  response: {out.get('response', '')}")
-                if usage:
-                    lines.append(f"  token_usage: {_compact_json(usage)}")
-
-            elif event_name == "on_tool_start":
-                lines.append(f"  tool: {event.get('tool', '')}")
-                lines.append(f"  input: {_compact_json(event.get('input', {}))}")
-
-            elif event_name == "on_tool_end":
-                # Surface the MCP fingerprint in the narrative sent to the LLM
-                # confidence evaluator: a tool call that went through an
-                # external MCP provider is meaningfully different provenance
-                # than a local in-process function, so this is signal, not noise.
-                via_mcp = " (via MCP)" if event.get("is_mcp_tool") else ""
-                lines.append(f"  output{via_mcp}: {_compact_json(event.get('output', ''))}")
-
-            elif event_name == "on_chain_start":
-                lines.append(f"  inputs: {_compact_json(event.get('inputs', {}))}")
-
-            elif event_name == "on_chain_end":
-                lines.append(f"  outputs: {_compact_json(event.get('outputs', {}))}")
-
-            elif event_name in ("on_llm_error", "on_tool_error", "on_chain_error"):
-                lines.append(f"  error: {event.get('error', '')}")
-
-            lines.append("")  # blank line between steps
-
-        return "\n".join(lines)
+        """Serialize collected events into a step-by-step string for the backend."""
+        return build_context(self.events, self.trace_id)

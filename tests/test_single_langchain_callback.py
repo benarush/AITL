@@ -8,8 +8,8 @@ import pytest
 from trellar import ObservabilityMode
 from trellar._context import _current_callback
 from trellar.agent_loop import AgentLoopResult
-from trellar.callbacks.langchain_callback import _AgentGuardCallback
-from trellar.callbacks.single_call_callback import _SingleCallGuardCallback
+from trellar.callbacks.langchain.langchain_callback import _AgentGuardCallback
+from trellar.callbacks.langchain.single_langchain_callback import _SingleCallGuardCallback
 
 from tests.factories import make_ai_message, make_llm_result
 

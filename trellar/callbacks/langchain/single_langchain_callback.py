@@ -4,12 +4,12 @@ import logging
 import uuid
 from typing import Any, Optional, TYPE_CHECKING
 
-from .._context import _current_callback
-from ..agent_loop import ObservabilityMode
+from ..._context import _current_callback
+from ...agent_loop import ObservabilityMode
 from .langchain_callback import _AgentGuardCallback
 
 if TYPE_CHECKING:
-    from ..agent_loop import AgentLoopResult
+    from ...agent_loop import AgentLoopResult
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +139,7 @@ class _SingleCallGuardCallback(_AgentGuardCallback):
             return
         if self.observability_mode is ObservabilityMode.IF_NOT_EVALUATED and self._evaluated:
             return
-        from ..agent_loop import evaluate_confidence
+        from ...agent_loop import evaluate_confidence
 
         try:
             self.trellar_evaluate_result = evaluate_confidence(_observability_call=True)

@@ -20,7 +20,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
 from trellar import ObservabilityMode
-from trellar.callbacks.langchain_callback import _AgentGuardCallback
+from trellar.callbacks.langchain.langchain_callback import _AgentGuardCallback
 
 from tests.factories import ScriptedRun, make_ai_message, make_llm_result
 

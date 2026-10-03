@@ -9,7 +9,7 @@ import requests
 from trellar import settings
 from trellar.agent_loop import AgentLoopResult, evaluate_confidence
 from trellar._context import _current_callback
-from trellar.callbacks.single_call_callback import _SingleCallGuardCallback
+from trellar.callbacks.langchain.single_langchain_callback import _SingleCallGuardCallback
 
 
 def _successful_post(
@@ -128,7 +128,7 @@ class TestEvaluateConfidenceValidation:
             _current_callback.reset(token)
 
     def test_raises_when_trace_id_not_resolved(self):
-        from trellar.callbacks.langchain_callback import _AgentGuardCallback
+        from trellar.callbacks.langchain.langchain_callback import _AgentGuardCallback
 
         handler = _AgentGuardCallback(agent_name="test-agent")
         token = _current_callback.set(handler)
