@@ -326,6 +326,92 @@ class TestGraph:
 
 
 # ---------------------------------------------------------------------------
+# Conditional routing (router -> jira | gate -> reporter), like the Jira example
+# ---------------------------------------------------------------------------
+
+@tool
+def route_to_jira_agent() -> str:
+    """Route to the jira agent."""
+    return "route:jira"
+
+
+@tool
+def route_to_send_email_agent() -> str:
+    """Route to the email path."""
+    return "route:send_email"
+
+
+@tool
+def flag_email_report_request() -> str:
+    """Flag that an email report was requested."""
+    return "email_report_requested"
+
+
+def build_routing_graph(guard, route_tool, jira_flags_email):
+    router = make_agent(guard, [tool_turn(route_tool, {}), text_turn("routed")], name="router_agent",
+                        tools=[route_to_jira_agent, route_to_send_email_agent])
+    jira_turns = ([tool_turn("flag_email_report_request", {}), text_turn("preparing report")]
+                  if jira_flags_email else [text_turn("3 open issues")])
+    jira = make_agent(guard, jira_turns, name="jira_react_agent", tools=[flag_email_report_request])
+    reporter = make_agent(guard, [text_turn("Dear user, ...")], name="reporter_agent")
+
+    called = lambda s, node: set(s.results[node].result.metrics.tool_metrics)
+    email_only = lambda s: "route_to_send_email_agent" in called(s, "router_agent")
+
+    builder = GraphBuilder()
+    builder.add_node(router, "router_agent")
+    builder.add_node(jira, "jira_react_agent")
+    builder.add_node(FunctionNode(lambda: evaluate_confidence()), "aitl_email_gate")
+    builder.add_node(reporter, "reporter_agent")
+    builder.add_edge("router_agent", "jira_react_agent", condition=lambda s: not email_only(s))
+    builder.add_edge("router_agent", "aitl_email_gate", condition=email_only)
+    builder.add_edge("jira_react_agent", "aitl_email_gate",
+                     condition=lambda s: "flag_email_report_request" in called(s, "jira_react_agent"))
+    builder.add_edge("aitl_email_gate", "reporter_agent")
+    builder.set_entry_point("router_agent")
+    builder.set_hook_providers([guard])
+    return builder.build()
+
+
+def agent_chain_names(guard):
+    """Names of chains that are agents (graph + node chains share a name pair, so dedupe)."""
+    return {e["node_name"] for e in events_of(guard, "on_chain_start")}
+
+
+class TestConditionalRouting:
+    def test_email_only_skips_jira(self, mock_post):
+        guard = get_strands_guard("t")
+        build_routing_graph(guard, "route_to_send_email_agent", jira_flags_email=False)("email me")
+
+        names = agent_chain_names(guard)
+        assert {"router_agent", "aitl_email_gate", "reporter_agent"} <= names
+        assert "jira_react_agent" not in names
+        assert mock_post.call_count == 1  # the gate evaluated once
+        assert_backend_accepts(guard)
+
+    def test_jira_without_email_skips_gate_and_reporter(self, mock_post):
+        guard = get_strands_guard("t")
+        build_routing_graph(guard, "route_to_jira_agent", jira_flags_email=False)("how many issues?")
+
+        names = agent_chain_names(guard)
+        assert "jira_react_agent" in names
+        assert not ({"aitl_email_gate", "reporter_agent"} & names)
+        mock_post.assert_not_called()
+        assert_backend_accepts(guard)
+
+    def test_jira_with_email_flag_goes_through_gate(self, mock_post):
+        guard = get_strands_guard("t")
+        build_routing_graph(guard, "route_to_jira_agent", jira_flags_email=True)("issues, then email me")
+
+        names = agent_chain_names(guard)
+        assert {"router_agent", "jira_react_agent", "aitl_email_gate", "reporter_agent"} <= names
+        order = [e["node_name"] for e in events_of(guard, "on_chain_start")]
+        assert order.index("jira_react_agent") < order.index("aitl_email_gate") < order.index("reporter_agent")
+        assert mock_post.call_count == 1
+        assert_backend_accepts(guard)
+
+
+# ---------------------------------------------------------------------------
 # ObservabilityMode
 # ---------------------------------------------------------------------------
 
