@@ -35,6 +35,10 @@ test = [
 langchain = [
     "langchain-core>=0.1",
 ]
+# Strands Agents needs Python 3.10+
+strands = [
+    "strands-agents>=1.57,<2",
+]
 
 [tool.setuptools.packages.find]
 include = ["trellar*"]

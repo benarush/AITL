@@ -1,4 +1,3 @@
-import hashlib
 import json
 import logging
 import uuid
@@ -9,6 +8,7 @@ from langchain_core.outputs import LLMResult
 
 from .._context import _current_callback
 from ..agent_loop import ObservabilityMode
+from ._common import build_context, compact_json as _compact_json, hash_tools as _hash_tools
 
 logger = logging.getLogger(__name__)
 
@@ -85,14 +85,6 @@ def _extract_llm_input(messages: list[Any]) -> dict[str, Optional[str]]:
     return {"system": system, "human": human}
 
 
-def _compact_json(value: Any) -> str:
-    """Render *value* as compact JSON, falling back to repr on failure."""
-    try:
-        return json.dumps(value, ensure_ascii=False, default=str)
-    except Exception:
-        return repr(value)
-
-
 def _extract_model_name(serialized: dict[str, Any]) -> Optional[str]:
     """
     Pull the real model identifier out of a serialized LLM dict.
@@ -106,21 +98,6 @@ def _extract_model_name(serialized: dict[str, Any]) -> Optional[str]:
         # Fall back to the class name so we always have something.
         name = serialized.get("name")
     return name
-
-
-def _hash_tools(tools: list[Any]) -> str:
-    """Stable content hash for a bound tool schema list.
-
-    Used as the key for ``_AgentGuardCallback.available_tools`` (so the exact
-    same toolset bound repeatedly across turns/nodes collapses to one entry)
-    and stamped onto the matching ``on_chat_model_start`` event so the backend
-    can correlate the declared toolset back to whichever agent/LLM-call node
-    actually bound it — see that event's ``node_name`` resolution in
-    aitl_fastapi's ``NetworkHandler._build_network_agents``. Opaque and only
-    ever compared for equality downstream, never recomputed independently.
-    """
-    canonical = json.dumps(tools, sort_keys=True, default=str)
-    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
 class _AgentGuardCallback(BaseCallbackHandler):
@@ -710,66 +687,5 @@ class _AgentGuardCallback(BaseCallbackHandler):
     # ------------------------------------------------------------------
 
     def build_context(self) -> str:
-        """Serialize collected events into a structured string for the Trellar backend.
-
-        Produces a numbered, step-by-step narrative of the full agent run
-        (LLM calls, tool invocations, chain boundaries) suitable as the
-        ``context`` field of the evaluate_confidence request.
-        """
-        lines: list[str] = [
-            f"=== Agent Run Context ===",
-            f"Trace ID: {self.trace_id}",
-            f"Total steps: {len(self.events)}",
-            "",
-        ]
-
-        for event in self.events:
-            step = event.get("graph_order", "?")
-            event_name = event.get("event", "unknown")
-            node_name = event.get("node_name") or ""
-            node_type = event.get("node_type") or ""
-
-            header = f"[Step {step}] {event_name}"
-            if node_name:
-                header += f"  ({node_type}: {node_name})"
-            lines.append(header)
-
-            # Per-event payload rendering
-            if event_name in ("on_llm_start", "on_chat_model_start"):
-                inp = event.get("input", {})
-                if inp.get("system"):
-                    lines.append(f"  system: {inp['system']}")
-                if inp.get("human"):
-                    lines.append(f"  human: {inp['human']}")
-
-            elif event_name == "on_llm_end":
-                out = event.get("output", {})
-                usage = event.get("token_usage")
-                lines.append(f"  response: {out.get('response', '')}")
-                if usage:
-                    lines.append(f"  token_usage: {_compact_json(usage)}")
-
-            elif event_name == "on_tool_start":
-                lines.append(f"  tool: {event.get('tool', '')}")
-                lines.append(f"  input: {_compact_json(event.get('input', {}))}")
-
-            elif event_name == "on_tool_end":
-                # Surface the MCP fingerprint in the narrative sent to the LLM
-                # confidence evaluator: a tool call that went through an
-                # external MCP provider is meaningfully different provenance
-                # than a local in-process function, so this is signal, not noise.
-                via_mcp = " (via MCP)" if event.get("is_mcp_tool") else ""
-                lines.append(f"  output{via_mcp}: {_compact_json(event.get('output', ''))}")
-
-            elif event_name == "on_chain_start":
-                lines.append(f"  inputs: {_compact_json(event.get('inputs', {}))}")
-
-            elif event_name == "on_chain_end":
-                lines.append(f"  outputs: {_compact_json(event.get('outputs', {}))}")
-
-            elif event_name in ("on_llm_error", "on_tool_error", "on_chain_error"):
-                lines.append(f"  error: {event.get('error', '')}")
-
-            lines.append("")  # blank line between steps
-
-        return "\n".join(lines)
+        """Serialize collected events into a step-by-step string for the backend."""
+        return build_context(self.events, self.trace_id)

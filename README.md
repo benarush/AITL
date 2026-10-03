@@ -54,6 +54,39 @@ graph.invoke(inputs, config={"callbacks": [guard]})
 
 ---
 
+## Strands Agents
+
+```bash
+pip install "trellar[strands]"   # requires Python 3.10+
+```
+
+```python
+from strands import Agent
+from strands.multiagent import GraphBuilder
+from trellar import get_strands_guard, evaluate_confidence
+
+guard = get_strands_guard("research-agent")
+
+# Give every agent a stable name, and register the guard on each agent...
+searcher = Agent(name="searcher", hooks=[guard])
+reporter = Agent(name="reporter", hooks=[guard])
+
+# ...and on the Graph/Swarm, so the whole run is one trace.
+builder = GraphBuilder()
+builder.add_node(searcher, "searcher")
+builder.add_node(reporter, "reporter")
+builder.add_edge("searcher", "reporter")
+builder.set_entry_point("searcher")
+builder.set_hook_providers([guard])
+graph = builder.build()
+
+graph("Find me something to report on")
+```
+
+Call `evaluate_confidence()` from inside the run (a graph node or a tool), exactly as with LangChain. `ObservabilityMode` works the same way. See `orchestrations_examples/our_lab_with_aviran/car_stocks_buy_mcp_celery.py/car_stocks_buy_from_remote_provider_orchestration_strands.py` for a full example.
+
+---
+
 ## Where to call `evaluate_confidence`
 
 Call it from a graph node, at the point in the run you want scored, while the run is still in progress — the callback handler is released as soon as the root run ends, so calling it after `invoke()` returns raises `ValueError`. The payload is the events captured **so far** — later nodes are not included.

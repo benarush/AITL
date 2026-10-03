@@ -13,6 +13,7 @@ from ._context import _current_callback
 if TYPE_CHECKING:
     from .callbacks.langchain_callback import _AgentGuardCallback
     from .callbacks.single_call_callback import _SingleCallGuardCallback
+    from .callbacks.strands_callback import _StrandsGuardCallback
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,32 @@ def get_single_call_guard(
     """
     from .callbacks.single_call_callback import _SingleCallGuardCallback
     return _SingleCallGuardCallback(agent_name=agent_name, observability_mode=observability_mode)
+
+
+def get_strands_guard(
+    agent_name: str,
+    observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+) -> "_StrandsGuardCallback":
+    """Create a hook provider that identifies a Strands Agents network to Trellar.
+
+    Requires ``pip install "trellar[strands]"``. Register the same guard on every
+    Agent and on the Graph/Swarm (so the whole run is one trace)::
+
+        guard = get_strands_guard("research-agent")
+
+        agent = Agent(name="searcher", hooks=[guard])
+        graph = GraphBuilder()...set_hook_providers([guard]).build()
+
+    Give every agent a stable ``name``: it is how the backend tells agents apart.
+    As with :func:`get_agent_guard`, call :func:`evaluate_confidence` from inside
+    the run (e.g. a graph node or a tool), not after it returns.
+
+    Args:
+        agent_name: Unique, stable name for this agent network.
+        observability_mode: See :class:`ObservabilityMode`.
+    """
+    from .callbacks.strands_callback import _StrandsGuardCallback
+    return _StrandsGuardCallback(agent_name=agent_name, observability_mode=observability_mode)
 
 
 def evaluate_confidence(
