@@ -254,6 +254,24 @@ class TestOnChatModelStart:
         assert event["model"] == "gemini-2.5-flash"
         assert event["input"] == {"system": "sys", "human": "hi"}
 
+    def test_multi_turn_history_is_folded_into_human_input(self, active_handler):
+        run_id = uuid.uuid4()
+        messages = [[
+            SystemMessage(content="sys"),
+            HumanMessage(content="turn 1"),
+            AIMessage(content="reply 1"),
+            HumanMessage(content="turn 2"),
+        ]]
+        active_handler.on_chat_model_start(
+            {"kwargs": {"model": "m"}}, messages, run_id=run_id, parent_run_id=None
+        )
+        event_input = active_handler.events[-1]["input"]
+        assert set(event_input) == {"system", "human"}
+        assert event_input["system"] == "sys"
+        assert event_input["human"] == (
+            "Human: turn 1\nAI LLM: reply 1\n\nCurrent message - turn 2"
+        )
+
     def test_only_first_message_batch_is_used(self, active_handler):
         run_id = uuid.uuid4()
         messages = [

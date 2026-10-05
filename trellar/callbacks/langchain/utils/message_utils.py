@@ -40,18 +40,31 @@ def _extract_llm_input(messages: list[Any]) -> dict[str, Optional[str]]:
 
     Returns a dict with:
     - ``system``: content of the first SystemMessage, or ``None``
-    - ``human``: content of the last HumanMessage, or ``None``
+    - ``human``: the active prompt, or ``None``
 
-    For multi-turn conversation histories the *last* human turn is used as the
-    active prompt because that is what the LLM is responding to.
+    The active prompt is the *last* human turn, because that is what the LLM
+    is responding to.  When earlier Human/AI turns exist before it, they are
+    folded into the same string (no extra dict key)::
+
+        Human: turn 1 text
+        AI LLM: turn 1 response text
+        Human: turn 2 text
+        AI LLM: turn 2 response text
+
+        Current message - <last human text>
+
+    With no prior history, ``human`` is just the plain last human text.  Only
+    human and non-empty AI text turns are kept in the history; tool messages
+    and tool-call-only AI messages are skipped.
 
     Handles both LangChain ``BaseMessage`` objects (standard) and plain dicts
     (e.g. when Phoenix auto-instrumentation serialises messages before passing
     them to the callback).  Also accepts ``"user"`` as a synonym for ``"human"``
-    to cover OpenAI-style role names.
+    and ``"assistant"`` as a synonym for ``"ai"`` to cover OpenAI-style role names.
     """
     system: Optional[str] = None
-    human: Optional[str] = None
+    # (role, content) pairs for human/ai turns, in order; role is "human" or "ai".
+    turns: list[tuple[str, str]] = []
 
     for msg in messages:
         if hasattr(msg, "type") and hasattr(msg, "content"):
@@ -68,7 +81,25 @@ def _extract_llm_input(messages: list[Any]) -> dict[str, Optional[str]]:
         if role == "system" and system is None:
             system = content
         elif role in ("human", "user"):
-            # "user" is the OpenAI/Phoenix style; keep overwriting so the last wins.
-            human = content
+            turns.append(("human", content))
+        elif role in ("ai", "assistant"):
+            turns.append(("ai", content))
 
+    last_human_idx = next(
+        (i for i in range(len(turns) - 1, -1, -1) if turns[i][0] == "human"), None
+    )
+    if last_human_idx is None:
+        return {"system": system, "human": None}
+
+    current = turns[last_human_idx][1]
+    history_lines = [
+        f"{'Human' if role == 'human' else 'AI LLM'}: {content}"
+        for role, content in turns[:last_human_idx]
+        # Tool-call-only AI messages have empty text; skip them.
+        if content or role == "human"
+    ]
+    if not history_lines:
+        return {"system": system, "human": current}
+
+    human = "\n".join(history_lines) + f"\n\nCurrent message - {current}"
     return {"system": system, "human": human}
