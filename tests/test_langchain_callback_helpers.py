@@ -72,14 +72,77 @@ class TestExtractLlmInput:
         ]
         assert _extract_llm_input(messages)["system"] == "first"
 
-    def test_last_human_wins_across_multi_turn_history(self):
+    def test_multi_turn_history_is_folded_into_human_string(self):
         messages = [
             SystemMessage(content="sys"),
             HumanMessage(content="turn 1"),
             AIMessage(content="reply 1"),
             HumanMessage(content="turn 2"),
         ]
-        assert _extract_llm_input(messages)["human"] == "turn 2"
+        result = _extract_llm_input(messages)
+        assert set(result) == {"system", "human"}
+        assert result["human"] == (
+            "Human: turn 1\n"
+            "AI LLM: reply 1\n"
+            "\n"
+            "Current message - turn 2"
+        )
+
+    def test_multi_turn_with_several_ai_replies(self):
+        messages = [
+            HumanMessage(content="turn 1"),
+            AIMessage(content="reply 1"),
+            HumanMessage(content="turn 2"),
+            AIMessage(content="reply 2"),
+            HumanMessage(content="turn 3"),
+        ]
+        assert _extract_llm_input(messages)["human"] == (
+            "Human: turn 1\n"
+            "AI LLM: reply 1\n"
+            "Human: turn 2\n"
+            "AI LLM: reply 2\n"
+            "\n"
+            "Current message - turn 3"
+        )
+
+    def test_tool_call_only_ai_and_tool_messages_skipped_in_history(self):
+        messages = [
+            HumanMessage(content="turn 1"),
+            AIMessage(content="", tool_calls=[{"name": "t", "args": {}, "id": "1"}]),
+            ToolMessage(content="tool result", tool_call_id="1"),
+            AIMessage(content="reply 1"),
+            HumanMessage(content="turn 2"),
+        ]
+        assert _extract_llm_input(messages)["human"] == (
+            "Human: turn 1\n"
+            "AI LLM: reply 1\n"
+            "\n"
+            "Current message - turn 2"
+        )
+
+    def test_multi_turn_with_dict_messages(self):
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "turn 1"},
+            {"role": "assistant", "content": "reply 1"},
+            {"type": "human", "content": "turn 2"},
+        ]
+        result = _extract_llm_input(messages)
+        assert result["system"] == "sys"
+        assert result["human"] == (
+            "Human: turn 1\n"
+            "AI LLM: reply 1\n"
+            "\n"
+            "Current message - turn 2"
+        )
+
+    def test_messages_after_last_human_are_ignored(self):
+        messages = [
+            HumanMessage(content="turn 1"),
+            AIMessage(content="", tool_calls=[{"name": "t", "args": {}, "id": "1"}]),
+            ToolMessage(content="tool result", tool_call_id="1"),
+        ]
+        assert _extract_llm_input(messages)["human"] == "turn 1"
 
     def test_plain_dict_messages_with_role_key(self):
         messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
