@@ -34,7 +34,7 @@ from strands.tools.mcp.mcp_agent_tool import MCPAgentTool
 from ..._context import _current_callback
 from ...agent_loop import ObservabilityMode
 from .._common import build_context, compact_json, hash_tools, to_jsonable
-from .utils import _last_user_text, _model_name, _openai_tools, _text_of_blocks
+from .utils import _last_user_text, _llm_human_input, _model_name, _openai_tools, _text_of_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +241,7 @@ class _StrandsGuardCallback(HookProvider):
             model,
             "llm",
             model=model,
-            input={"system": agent.system_prompt, "human": _last_user_text(agent.messages)},
+            input={"system": agent.system_prompt, "human": _llm_human_input(agent.messages)},
             tools_hash=tools_hash,
         )
 

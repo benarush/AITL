@@ -24,6 +24,7 @@ from trellar import (  # noqa: E402
     get_strands_single_call_guard,
 )
 from trellar._context import _current_callback  # noqa: E402
+from trellar.callbacks.strands.utils import _llm_human_input  # noqa: E402
 
 from tests.backend_schema import AgentLoopRequest  # noqa: E402
 from tests.strands_factories import FakeModel, events_of, text_turn, tool_turn  # noqa: E402
@@ -145,6 +146,26 @@ class TestSingleAgent:
         assert start["input"] == {"system": "Be brief.", "human": "hello there"}
         assert start["tools_hash"] is None
 
+    def test_multi_turn_history_is_folded_into_human_input(self):
+        guard = get_strands_guard("t")
+        agent = make_agent(
+            guard, [text_turn("Hello! How can I help?"), text_turn("KAN-5 details")],
+            system_prompt="Be brief.",
+        )
+        agent("hello")
+        agent("give me details about KAN-5")
+
+        starts = events_of(guard, "on_chat_model_start")
+        assert len(starts) == 1  # the guard resets per root run; this is the 2nd run's call
+        assert set(starts[0]["input"]) == {"system", "human"}
+        assert starts[0]["input"]["system"] == "Be brief."
+        assert starts[0]["input"]["human"] == (
+            "Human: hello\n"
+            "AI LLM: Hello! How can I help?\n"
+            "\n"
+            "Current message - give me details about KAN-5"
+        )
+
     def test_tool_events_and_response_folded_into_llm(self):
         guard = get_strands_guard("t")
         make_agent(guard, [tool_turn("add", {"a": 1, "b": 2}), text_turn("3")], tools=[add])("1+2?")
@@ -216,6 +237,60 @@ class TestSingleAgent:
         assert f"Trace ID: {guard.trace_id}" in context
         assert "tool: add" in context
         assert "human: 1+2?" in context
+
+
+# ---------------------------------------------------------------------------
+# LLM human input (history folding)
+# ---------------------------------------------------------------------------
+
+def _msg(role, *blocks):
+    return {"role": role, "content": list(blocks)}
+
+
+class TestLlmHumanInput:
+    def test_no_messages_returns_none(self):
+        assert _llm_human_input([]) is None
+        assert _llm_human_input(None) is None
+
+    def test_single_turn_is_plain_text(self):
+        assert _llm_human_input([_msg("user", {"text": "hi"})]) == "hi"
+
+    def test_multi_turn_history(self):
+        messages = [
+            _msg("user", {"text": "hello"}),
+            _msg("assistant", {"text": "Hello! How can I help?"}),
+            _msg("user", {"text": "turn 2"}),
+            _msg("assistant", {"text": "reply 2"}),
+            _msg("user", {"text": "turn 3"}),
+        ]
+        assert _llm_human_input(messages) == (
+            "Human: hello\n"
+            "AI LLM: Hello! How can I help?\n"
+            "Human: turn 2\n"
+            "AI LLM: reply 2\n"
+            "\n"
+            "Current message - turn 3"
+        )
+
+    def test_tool_use_and_tool_result_messages_are_skipped(self):
+        messages = [
+            _msg("user", {"text": "turn 1"}),
+            _msg("assistant", {"toolUse": {"toolUseId": "1", "name": "add", "input": {}}}),
+            _msg("user", {"toolResult": {"toolUseId": "1", "content": [{"text": "3"}]}}),
+            _msg("assistant", {"text": "reply 1"}),
+            _msg("user", {"text": "turn 2"}),
+        ]
+        assert _llm_human_input(messages) == (
+            "Human: turn 1\nAI LLM: reply 1\n\nCurrent message - turn 2"
+        )
+
+    def test_messages_after_last_user_turn_are_ignored(self):
+        messages = [
+            _msg("user", {"text": "turn 1"}),
+            _msg("assistant", {"toolUse": {"toolUseId": "1", "name": "add", "input": {}}}),
+            _msg("user", {"toolResult": {"toolUseId": "1", "content": [{"text": "3"}]}}),
+        ]
+        assert _llm_human_input(messages) == "turn 1"
 
 
 # ---------------------------------------------------------------------------
