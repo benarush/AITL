@@ -32,3 +32,5 @@ act.png
 
 # Docker
 .dockerignore
+
+aitl_ts_lib/
