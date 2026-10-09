@@ -91,11 +91,12 @@ from trellar import trellar_strands_agent, evaluate_confidence
 
 trellar_agent = trellar_strands_agent("research-agent")
 
-# Give every agent a stable name, and register the Trellar agent on each agent...
-searcher = Agent(name="searcher", hooks=[trellar_agent])
-reporter = Agent(name="reporter", hooks=[trellar_agent])
+# Give every agent a stable name.
+searcher = Agent(name="searcher")
+reporter = Agent(name="reporter")
 
-# ...and on the Graph/Swarm, so the whole run is one trace.
+# Register the Trellar agent on the Graph/Swarm: the whole run is one trace, and every
+# node's Agent is bound automatically (no need for `hooks=[trellar_agent]` on each one).
 builder = GraphBuilder()
 builder.add_node(searcher, "searcher")
 builder.add_node(reporter, "reporter")
@@ -106,6 +107,8 @@ graph = builder.build()
 
 graph("Find me something to report on")
 ```
+
+A standalone Agent (no Graph/Swarm) still needs `Agent(hooks=[trellar_agent])`. Passing it explicitly to a graph's Agents as well is harmless: registering twice is a no-op. Once bound, an Agent keeps the hook (Strands cannot remove it).
 
 Call `evaluate_confidence()` from inside the run (a graph node or a tool), exactly as with LangChain. `ObservabilityMode` works the same way. See `orchestrations_examples/our_lab_with_aviran/car_stocks_buy_mcp_celery.py/car_stocks_buy_from_remote_provider_orchestration_strands.py` for a full example.
 

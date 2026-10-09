@@ -142,13 +142,16 @@ def trellar_strands_agent(
 ) -> "_StrandsAgentCallback":
     """Create a hook provider that identifies a Strands Agents network to Trellar.
 
-    Requires ``pip install "trellar[strands]"``. Register the same Trellar agent on every
-    Agent and on the Graph/Swarm (so the whole run is one trace)::
+    Requires ``pip install "trellar[strands]"``. Register the Trellar agent on the
+    Graph/Swarm (so the whole run is one trace); every node's Agent is bound
+    automatically::
 
         trellar_agent = trellar_strands_agent("research-agent")
 
-        agent = Agent(name="searcher", hooks=[trellar_agent])
+        agent = Agent(name="searcher")
         graph = GraphBuilder()...set_hook_providers([trellar_agent]).build()
+
+    A standalone Agent (no Graph) needs ``Agent(name=..., hooks=[trellar_agent])``.
 
     Give every agent a stable ``name``: it is how the backend tells agents apart.
     As with :func:`trellar_langchain_agent`, call :func:`evaluate_confidence` from inside

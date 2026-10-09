@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
+import weakref
 from contextvars import ContextVar
 from typing import Any, Optional
 
@@ -46,9 +47,10 @@ _current_run: ContextVar[Optional[str]] = ContextVar("trellar_strands_current_ru
 class _StrandsAgentCallback(HookProvider):
     """Hook provider that records a Strands run for the Trellar backend.
 
-    Not public API; use :func:`trellar.trellar_strands_agent`. Register it on every
-    Agent (``Agent(hooks=[trellar_agent])``) and on the Graph/Swarm
-    (``GraphBuilder.set_hook_providers([trellar_agent])``).
+    Not public API; use :func:`trellar.trellar_strands_agent`. Register it on the
+    Graph/Swarm (``GraphBuilder.set_hook_providers([trellar_agent])``): every node's
+    Agent is then bound automatically when its node starts. A standalone Agent (no
+    Graph) still needs ``Agent(hooks=[trellar_agent])``. Registering twice is safe.
     """
 
     def __init__(
@@ -65,6 +67,9 @@ class _StrandsAgentCallback(HookProvider):
         self.agent_name = agent_name
         self.observability_mode = ObservabilityMode(observability_mode)
         self._lock = threading.Lock()
+        # Registries we already bound to. Not part of _reset: it must outlive a run, and
+        # being weak it never keeps an Agent alive.
+        self._registries: weakref.WeakSet[HookRegistry] = weakref.WeakSet()
         self._reset(None)
 
     # ------------------------------------------------------------------
@@ -163,6 +168,12 @@ class _StrandsAgentCallback(HookProvider):
     # ------------------------------------------------------------------
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
+        # Idempotent: explicit ``hooks=[...]`` plus auto-binding (or a re-run node) must
+        # not register twice, or every event would be recorded twice.
+        with self._lock:
+            if registry in self._registries:
+                return
+            self._registries.add(registry)
         registry.add_callback(BeforeMultiAgentInvocationEvent, self._on_multi_start)
         registry.add_callback(AfterMultiAgentInvocationEvent, self._on_multi_end)
         registry.add_callback(BeforeNodeCallEvent, self._on_node_start)
@@ -193,6 +204,12 @@ class _StrandsAgentCallback(HookProvider):
 
     def _on_node_start(self, event: BeforeNodeCallEvent) -> None:
         self._node_runs[(id(event.source), event.node_id)] = self._start_chain(event.node_id, [])
+        # Bind this node's Agent so the user only registers us on the Graph. Best effort:
+        # if Strands internals differ, the Agent just needs the explicit hook.
+        node = getattr(event.source, "nodes", {}).get(event.node_id)
+        hooks = getattr(getattr(node, "executor", None), "hooks", None)
+        if hooks is not None:
+            hooks.add_hook(self)
 
     def _on_node_end(self, event: AfterNodeCallEvent) -> None:
         run_id = self._node_runs.pop((id(event.source), event.node_id), None)

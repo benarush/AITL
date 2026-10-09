@@ -405,6 +405,80 @@ class TestGraph:
         assert_backend_accepts(trellar_agent)
 
 
+class TestAutoBind:
+    """Registering on the Graph alone binds every node's Agent; double registration is a no-op."""
+
+    @staticmethod
+    def bare_agent(name, hooks=None):
+        return Agent(
+            # two turns: the same Agent may be run twice (the fake model errors when out of turns)
+            name=name, model=FakeModel([text_turn("ok"), text_turn("ok")]),
+            hooks=hooks or [], callback_handler=None,
+        )
+
+    @staticmethod
+    def graph_of(trellar_agent, *agents):
+        builder = GraphBuilder()
+        for a in agents:
+            builder.add_node(a, a.name)
+        for first, second in zip(agents, agents[1:]):
+            builder.add_edge(first.name, second.name)
+        builder.set_entry_point(agents[0].name)
+        builder.set_hook_providers([trellar_agent])
+        return builder.build()
+
+    @staticmethod
+    def counts(trellar_agent):
+        """Number of recorded events per event type (duplicates would inflate these)."""
+        names = [e["event"] for e in trellar_agent.events]
+        return {n: names.count(n) for n in set(names)}
+
+    def test_graph_hook_alone_records_agent_llm_events(self):
+        trellar_agent = trellar_strands_agent("t")
+        self.graph_of(trellar_agent, self.bare_agent("a1"), self.bare_agent("a2"))("go")
+
+        assert self.counts(trellar_agent)["on_chat_model_start"] == 2  # one per agent
+        assert_backend_accepts(trellar_agent)
+
+    def test_explicit_hook_plus_graph_hook_records_once(self):
+        explicit, auto = trellar_strands_agent("t"), trellar_strands_agent("t")
+        self.graph_of(explicit, self.bare_agent("a1", hooks=[explicit]), self.bare_agent("a2", hooks=[explicit]))("go")
+        self.graph_of(auto, self.bare_agent("a1"), self.bare_agent("a2"))("go")
+
+        # identical to the auto-bound run: nothing recorded twice
+        assert self.counts(explicit) == self.counts(auto)
+
+    def test_graph_run_twice_does_not_duplicate(self):
+        trellar_agent = trellar_strands_agent("t")
+        graph = self.graph_of(trellar_agent, self.bare_agent("a1"), self.bare_agent("a2"))
+        graph("go")
+        first_counts, first_trace = self.counts(trellar_agent), trellar_agent.trace_id
+        graph("again")
+
+        assert self.counts(trellar_agent) == first_counts
+        assert trellar_agent.trace_id != first_trace
+
+    def test_agent_in_two_graphs_records_once_per_run(self):
+        trellar_agent = trellar_strands_agent("t")
+        shared = self.bare_agent("shared")
+        self.graph_of(trellar_agent, shared)("go")
+        self.graph_of(trellar_agent, shared)("again")  # second graph binds the same Agent again
+
+        assert self.counts(trellar_agent)["on_chat_model_start"] == 1  # this run only, not doubled
+
+    def test_non_agent_node_is_skipped_without_error(self):
+        trellar_agent = trellar_strands_agent("t")
+        builder = GraphBuilder()
+        builder.add_node(FunctionNode(lambda: None), "gate")
+        builder.set_entry_point("gate")
+        builder.set_hook_providers([trellar_agent])
+        builder.build()("go")
+
+        assert [e["node_name"] for e in events_of(trellar_agent, "on_chain_start")] == [
+            trellar_agent.events[0]["node_name"], "gate",
+        ]
+
+
 # ---------------------------------------------------------------------------
 # Conditional routing (router -> jira | gate -> reporter), like the Jira example
 # ---------------------------------------------------------------------------

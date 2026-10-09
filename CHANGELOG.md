@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Strands: registering the Trellar agent on the Graph/Swarm now binds every node's
+  Agent automatically, so `hooks=[trellar_agent]` on each Agent is no longer needed
+  (still harmless, and still required for a standalone Agent). Registration is
+  idempotent: nothing is recorded twice.
+
 ### Changed
 - The public factory functions are renamed to product-friendly names:
   `get_agent_guard` -> `trellar_langchain_agent`,
