@@ -8,22 +8,22 @@ import pytest
 from trellar import ObservabilityMode
 from trellar._context import _current_callback
 from trellar.agent_loop import AgentLoopResult
-from trellar.callbacks.langchain.langchain_callback import _AgentGuardCallback
-from trellar.callbacks.langchain.single_langchain_callback import _SingleCallGuardCallback
+from trellar.callbacks.langchain.langchain_callback import _LangchainAgentCallback
+from trellar.callbacks.langchain.single_langchain_callback import _LangchainSingleCallCallback
 
 from tests.factories import make_ai_message, make_llm_result
 
 
 @pytest.fixture
 def single_call_handler():
-    """A fresh _SingleCallGuardCallback, not yet registered in _current_callback.
+    """A fresh _LangchainSingleCallCallback, not yet registered in _current_callback.
 
     Mirrors conftest.py's `active_handler` fixture but for the single-call
     subclass, and without pre-setting trace_id -- these tests exercise the
     root-run detection itself.
     """
     token = _current_callback.set(None)
-    handler = _SingleCallGuardCallback(agent_name="single-test")
+    handler = _LangchainSingleCallCallback(agent_name="single-test")
     yield handler
     _current_callback.reset(token)
 
@@ -90,7 +90,7 @@ class TestRootRunDetection:
 
 
 # ---------------------------------------------------------------------------
-# Recording -- inherited behavior from _AgentGuardCallback via super()
+# Recording -- inherited behavior from _LangchainAgentCallback via super()
 # ---------------------------------------------------------------------------
 
 class TestRecordingIsInherited:
@@ -113,11 +113,11 @@ class TestRecordingIsInherited:
         assert end_event["output"]["response"] == "the office opens at 9am"
 
     def test_is_single_call_true_on_subclass_absent_on_base(self, single_call_handler):
-        # _AgentGuardCallback is untouched -- it has no is_single_call
+        # _LangchainAgentCallback is untouched -- it has no is_single_call
         # attribute at all. evaluate_confidence()'s payload construction
         # uses getattr(callback, "is_single_call", False), so the base
         # class correctly defaults to False without ever declaring it.
-        base = _AgentGuardCallback(agent_name="base-test")
+        base = _LangchainAgentCallback(agent_name="base-test")
         assert single_call_handler.is_single_call is True
         assert not hasattr(base, "is_single_call")
         assert getattr(base, "is_single_call", False) is False
@@ -143,7 +143,7 @@ class TestAutoEvaluateTrigger:
     def test_always_mode_calls_evaluate_confidence_and_stores_trellar_evaluate_result(self):
         token = _current_callback.set(None)
         try:
-            handler = _SingleCallGuardCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
+            handler = _LangchainSingleCallCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
             with patch("trellar.agent_loop.evaluate_confidence", return_value=_fake_result()) as mock_eval:
                 self._run_one_call(handler)
             mock_eval.assert_called_once_with(_observability_call=True)
@@ -155,7 +155,7 @@ class TestAutoEvaluateTrigger:
     def test_always_mode_calls_even_if_already_evaluated(self):
         token = _current_callback.set(None)
         try:
-            handler = _SingleCallGuardCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
+            handler = _LangchainSingleCallCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
             run_id = uuid.uuid4()
             handler.on_chat_model_start({"kwargs": {"model": "m"}}, [[]], run_id=run_id, parent_run_id=None)
             handler._evaluated = True
@@ -168,7 +168,7 @@ class TestAutoEvaluateTrigger:
     def test_if_not_evaluated_mode_calls_when_not_yet_evaluated(self):
         token = _current_callback.set(None)
         try:
-            handler = _SingleCallGuardCallback(agent_name="a", observability_mode=ObservabilityMode.IF_NOT_EVALUATED)
+            handler = _LangchainSingleCallCallback(agent_name="a", observability_mode=ObservabilityMode.IF_NOT_EVALUATED)
             with patch("trellar.agent_loop.evaluate_confidence", return_value=_fake_result()) as mock_eval:
                 self._run_one_call(handler)
             mock_eval.assert_called_once()
@@ -179,7 +179,7 @@ class TestAutoEvaluateTrigger:
     def test_if_not_evaluated_mode_skips_when_already_evaluated(self):
         token = _current_callback.set(None)
         try:
-            handler = _SingleCallGuardCallback(agent_name="a", observability_mode=ObservabilityMode.IF_NOT_EVALUATED)
+            handler = _LangchainSingleCallCallback(agent_name="a", observability_mode=ObservabilityMode.IF_NOT_EVALUATED)
             run_id = uuid.uuid4()
             handler.on_chat_model_start({"kwargs": {"model": "m"}}, [[]], run_id=run_id, parent_run_id=None)
             handler._evaluated = True
@@ -193,7 +193,7 @@ class TestAutoEvaluateTrigger:
     def test_auto_evaluate_failure_is_caught_and_stored_as_trellar_evaluate_error(self):
         token = _current_callback.set(None)
         try:
-            handler = _SingleCallGuardCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
+            handler = _LangchainSingleCallCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
             boom = ValueError("no api key")
             with patch("trellar.agent_loop.evaluate_confidence", side_effect=boom):
                 self._run_one_call(handler)  # must not raise
@@ -206,7 +206,7 @@ class TestAutoEvaluateTrigger:
 # ---------------------------------------------------------------------------
 # on_llm_end / on_llm_error — _current_callback release (root run only)
 #
-# Local equivalent of _AgentGuardCallback's on_chain_end/on_chain_error
+# Local equivalent of _LangchainAgentCallback's on_chain_end/on_chain_error
 # release: on_llm_start/on_chat_model_start register the handler, and
 # whichever of on_llm_end / on_llm_error fires next (mutually exclusive per
 # run_id) must release it.
@@ -228,11 +228,11 @@ class TestCurrentCallbackReleaseOnLlmEnd:
         # not blindly clear/overwrite that registration.
         outer_token = _current_callback.set(None)
         try:
-            handler = _SingleCallGuardCallback(agent_name="a")
+            handler = _LangchainSingleCallCallback(agent_name="a")
             run_id = uuid.uuid4()
             handler.on_chat_model_start({"kwargs": {"model": "m"}}, [[]], run_id=run_id, parent_run_id=None)
 
-            other = _SingleCallGuardCallback(agent_name="b")
+            other = _LangchainSingleCallCallback(agent_name="b")
             token = _current_callback.set(other)
             try:
                 handler.on_llm_end(make_llm_result(message=make_ai_message("hi")), run_id=run_id, parent_run_id=None)
@@ -261,13 +261,13 @@ class TestCurrentCallbackReleaseOnLlmError:
         assert _current_callback.get() is single_call_handler
 
     def test_on_llm_end_never_fires_for_a_call_that_errored(self):
-        # Regression guard mirroring the graph guard's equivalent: on_llm_end
+        # Regression guard mirroring the graph callback's equivalent: on_llm_end
         # and on_llm_error are mutually exclusive per run_id, so a crash must
         # go through the error-path release, not rely on a never-to-arrive
         # on_llm_end / _auto_evaluate() call.
         token = _current_callback.set(None)
         try:
-            handler = _SingleCallGuardCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
+            handler = _LangchainSingleCallCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
             run_id = uuid.uuid4()
             handler.on_chat_model_start({"kwargs": {"model": "m"}}, [[]], run_id=run_id, parent_run_id=None)
 

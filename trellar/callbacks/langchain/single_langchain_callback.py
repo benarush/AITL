@@ -6,7 +6,7 @@ from typing import Any, Optional, TYPE_CHECKING
 
 from ..._context import _current_callback
 from ...agent_loop import ObservabilityMode
-from .langchain_callback import _AgentGuardCallback
+from .langchain_callback import _LangchainAgentCallback
 
 if TYPE_CHECKING:
     from ...agent_loop import AgentLoopResult
@@ -14,13 +14,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _SingleCallGuardCallback(_AgentGuardCallback):
-    """Guard for a single bare LLM call (no LangGraph/chain wrapper).
+class _LangchainSingleCallCallback(_LangchainAgentCallback):
+    """Callback for a single bare LLM call (no LangGraph/chain wrapper).
 
-    This class is not part of the public API. Use :func:`get_single_call_guard`
+    This class is not part of the public API. Use :func:`trellar_langchain_single_call`
     to obtain an instance.
 
-    ``_AgentGuardCallback`` only sets ``trace_id``/registers ``_current_callback``
+    ``_LangchainAgentCallback`` only sets ``trace_id``/registers ``_current_callback``
     inside ``on_chain_start``, and only auto-triggers ``evaluate_confidence()``
     inside ``on_chain_end`` -- both scoped to ``parent_run_id is None``. A bare
     ``llm.invoke(...)`` never fires either of those events (no chain involved),
@@ -28,7 +28,7 @@ class _SingleCallGuardCallback(_AgentGuardCallback):
     ``on_llm_start``/``on_chat_model_start`` (root-run reset + registration) and
     ``on_llm_end`` (auto-evaluate trigger).
 
-    Deliberately does **not** modify ``_AgentGuardCallback`` in any way -- it
+    Deliberately does **not** modify ``_LangchainAgentCallback`` in any way -- it
     only calls the parent's existing public methods via ``super()`` to reuse
     message serialization / event recording / tool-call folding. The small
     reset and auto-evaluate blocks are re-implemented locally here rather than
@@ -54,7 +54,7 @@ class _SingleCallGuardCallback(_AgentGuardCallback):
         """Local equivalent of on_chain_start's root-reset block.
 
         Duplicated here rather than extracted onto the base class so
-        _AgentGuardCallback (the graph path) is left completely untouched.
+        _LangchainAgentCallback (the graph path) is left completely untouched.
         """
         self.trace_id = run_id
         self.events = []

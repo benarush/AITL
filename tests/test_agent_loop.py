@@ -9,7 +9,7 @@ import requests
 from trellar import settings
 from trellar.agent_loop import AgentLoopResult, evaluate_confidence
 from trellar._context import _current_callback
-from trellar.callbacks.langchain.single_langchain_callback import _SingleCallGuardCallback
+from trellar.callbacks.langchain.single_langchain_callback import _LangchainSingleCallCallback
 
 
 def _successful_post(
@@ -86,7 +86,7 @@ class TestEvaluateConfidenceRequest:
     @patch("trellar.agent_loop.requests.post")
     def test_single_call_flag_true_for_single_call_handler(self, mock_post):
         mock_post.return_value = _successful_post()
-        handler = _SingleCallGuardCallback(agent_name="single-test")
+        handler = _LangchainSingleCallCallback(agent_name="single-test")
         handler.trace_id = uuid.uuid4()
         token = _current_callback.set(handler)
         try:
@@ -128,9 +128,9 @@ class TestEvaluateConfidenceValidation:
             _current_callback.reset(token)
 
     def test_raises_when_trace_id_not_resolved(self):
-        from trellar.callbacks.langchain.langchain_callback import _AgentGuardCallback
+        from trellar.callbacks.langchain.langchain_callback import _LangchainAgentCallback
 
-        handler = _AgentGuardCallback(agent_name="test-agent")
+        handler = _LangchainAgentCallback(agent_name="test-agent")
         token = _current_callback.set(handler)
         try:
             with pytest.raises(ValueError, match="trace_id could not be resolved"):

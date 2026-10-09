@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from trellar._context import _current_callback
-from trellar.callbacks.langchain.langchain_callback import _AgentGuardCallback
+from trellar.callbacks.langchain.langchain_callback import _LangchainAgentCallback
 
 
 @pytest.fixture
@@ -24,12 +24,12 @@ def mock_http_ok() -> MagicMock:
 
 
 @pytest.fixture
-def active_handler() -> _AgentGuardCallback:
-    """An _AgentGuardCallback registered in _current_callback with a fake trace_id.
+def active_handler() -> _LangchainAgentCallback:
+    """An _LangchainAgentCallback registered in _current_callback with a fake trace_id.
 
     Automatically cleans up the ContextVar after each test via reset().
     """
-    handler = _AgentGuardCallback(agent_name="test-agent")
+    handler = _LangchainAgentCallback(agent_name="test-agent")
     handler.trace_id = uuid.uuid4()
     token = _current_callback.set(handler)
     yield handler
