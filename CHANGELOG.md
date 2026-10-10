@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-10
+
 ### Added
 - Strands: registering the Trellar agent on the Graph/Swarm now binds every node's
   Agent automatically, so `hooks=[trellar_agent]` on each Agent is no longer needed
@@ -58,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - Strands agents support (`add_strands_support`).
 
-[Unreleased]: https://github.com/benarush/AITL/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/benarush/AITL/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/benarush/AITL/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/benarush/AITL/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/benarush/AITL/compare/v0.5.0...v0.6.0
