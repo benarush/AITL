@@ -14,10 +14,10 @@ from .utils import _content_to_str, _extract_llm_input, _extract_model_name
 logger = logging.getLogger(__name__)
 
 
-class _AgentGuardCallback(BaseCallbackHandler):
+class _LangchainAgentCallback(BaseCallbackHandler):
     """Internal LangChain callback handler that tracks agent lifecycle events.
 
-    This class is not part of the public API. Use :func:`get_agent_guard` to
+    This class is not part of the public API. Use :func:`trellar_langchain_agent` to
     obtain an instance.
 
     Accumulates all graph events into ``self.events`` as a list of dicts.
@@ -56,7 +56,7 @@ class _AgentGuardCallback(BaseCallbackHandler):
         Falls back to ``str()`` for anything that is not a recognised message object.
         """
         if hasattr(msg, "type") and hasattr(msg, "content"):
-            prefix = _AgentGuardCallback._MESSAGE_PREFIXES.get(msg.type.lower(), "MESSAGE")
+            prefix = _LangchainAgentCallback._MESSAGE_PREFIXES.get(msg.type.lower(), "MESSAGE")
             content = msg.content
             if not isinstance(content, str):
                 try:
@@ -109,7 +109,7 @@ class _AgentGuardCallback(BaseCallbackHandler):
         result: list[str] = []
         for msg in messages:
             if hasattr(msg, "type") and hasattr(msg, "content"):
-                prefix = _AgentGuardCallback._MESSAGE_PREFIXES.get(
+                prefix = _LangchainAgentCallback._MESSAGE_PREFIXES.get(
                     msg.type.lower(), "MESSAGE"
                 )
                 content = msg.content
@@ -216,13 +216,13 @@ class _AgentGuardCallback(BaseCallbackHandler):
         if value is None or isinstance(value, (str, int, float, bool)):
             return value
         if hasattr(value, "type") and hasattr(value, "content"):
-            return _AgentGuardCallback._serialize_message_obj(value)
+            return _LangchainAgentCallback._serialize_message_obj(value)
         if hasattr(value, "model_dump"):
-            return _AgentGuardCallback._to_jsonable(value.model_dump(mode="json"))
+            return _LangchainAgentCallback._to_jsonable(value.model_dump(mode="json"))
         if isinstance(value, dict):
-            return {k: _AgentGuardCallback._to_jsonable(v) for k, v in value.items()}
+            return {k: _LangchainAgentCallback._to_jsonable(v) for k, v in value.items()}
         if isinstance(value, (list, tuple)):
-            return [_AgentGuardCallback._to_jsonable(v) for v in value]
+            return [_LangchainAgentCallback._to_jsonable(v) for v in value]
         try:
             json.dumps(value)
             return value

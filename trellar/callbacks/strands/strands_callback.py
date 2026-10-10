@@ -1,4 +1,4 @@
-"""Strands Agents guard: turns Strands hook events into the same event payload
+"""Strands Agents callback: turns Strands hook events into the same event payload
 the LangChain callback produces (chain / llm / tool events).
 
 Mapping:
@@ -43,12 +43,12 @@ logger = logging.getLogger(__name__)
 _current_run: ContextVar[Optional[str]] = ContextVar("trellar_strands_current_run", default=None)
 
 
-class _StrandsGuardCallback(HookProvider):
+class _StrandsAgentCallback(HookProvider):
     """Hook provider that records a Strands run for the Trellar backend.
 
-    Not public API; use :func:`trellar.get_strands_guard`. Register it on every
-    Agent (``Agent(hooks=[guard])``) and on the Graph/Swarm
-    (``GraphBuilder.set_hook_providers([guard])``).
+    Not public API; use :func:`trellar.trellar_strands_agent`. Register it on every
+    Agent (``Agent(hooks=[trellar_agent])``) and on the Graph/Swarm
+    (``GraphBuilder.set_hook_providers([trellar_agent])``).
     """
 
     def __init__(
@@ -120,7 +120,7 @@ class _StrandsGuardCallback(HookProvider):
     def _start_chain(self, name: Optional[str], inputs: list[Any]) -> str:
         run_id = str(uuid.uuid4())
         if self._root_run_id is None:
-            # First run: this is the root. Reset state and become the active guard.
+            # First run: this is the root. Reset state and become the active Trellar agent.
             self._reset(run_id)
             parent = None
             _current_callback.set(self)
@@ -329,11 +329,11 @@ class _StrandsGuardCallback(HookProvider):
         return build_context(self.events, self.trace_id)
 
 
-class _StrandsSingleCallGuardCallback(_StrandsGuardCallback):
-    """Guard for one Agent called once (no Graph/Swarm).
+class _StrandsSingleCallCallback(_StrandsAgentCallback):
+    """Callback for one Agent called once (no Graph/Swarm).
 
-    Not public API; use :func:`trellar.get_strands_single_call_guard`. The base
-    guard already treats a bare Agent call as a root run, so this only adds the
+    Not public API; use :func:`trellar.trellar_strands_single_call`. The base
+    callback already treats a bare Agent call as a root run, so this only adds the
     ``single_call`` payload flag and keeps the auto-evaluate outcome (the run is
     over by the time the caller gets control, so it can't be fetched manually).
     """
@@ -347,7 +347,7 @@ class _StrandsSingleCallGuardCallback(_StrandsGuardCallback):
         self.trellar_evaluate_error: Optional[BaseException] = None
 
     def _maybe_auto_evaluate(self) -> None:
-        """Like the base version, but stores the result/error on the guard."""
+        """Like the base version, but stores the result/error on the callback."""
         if self.observability_mode is ObservabilityMode.NONE:
             return
         if self.observability_mode is ObservabilityMode.IF_NOT_EVALUATED and self._evaluated:

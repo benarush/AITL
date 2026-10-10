@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from trellar import ObservabilityMode
 from trellar._context import _current_callback
-from trellar.callbacks.langchain.langchain_callback import _AgentGuardCallback
+from trellar.callbacks.langchain.langchain_callback import _LangchainAgentCallback
 
 from tests.factories import FakeGeneration, FakeMessage, FakeResponse, make_ai_message, make_llm_result
 
@@ -147,33 +147,33 @@ class TestEventsAreAlwaysJsonSerializable:
 class TestToJsonable:
     def test_primitives_pass_through(self):
         for value in (None, "str", 1, 1.5, True, False):
-            assert _AgentGuardCallback._to_jsonable(value) == value
+            assert _LangchainAgentCallback._to_jsonable(value) == value
 
     def test_message_like_object_uses_serialize_message_obj(self):
         msg = AIMessage(content="hi")
-        assert _AgentGuardCallback._to_jsonable(msg) == "AI MESSAGE: hi"
+        assert _LangchainAgentCallback._to_jsonable(msg) == "AI MESSAGE: hi"
 
     def test_pydantic_model_uses_model_dump(self):
         model = _FakeTriage(severity="high", affected_service="checkout")
-        assert _AgentGuardCallback._to_jsonable(model) == {
+        assert _LangchainAgentCallback._to_jsonable(model) == {
             "severity": "high",
             "affected_service": "checkout",
         }
 
     def test_nested_dict_and_list_are_recursively_coerced(self):
         value = {"a": [1, 2, {"b": AIMessage(content="hi")}]}
-        result = _AgentGuardCallback._to_jsonable(value)
+        result = _LangchainAgentCallback._to_jsonable(value)
         assert result == {"a": [1, 2, {"b": "AI MESSAGE: hi"}]}
 
     def test_tuple_is_converted_to_list(self):
-        assert _AgentGuardCallback._to_jsonable((1, 2, 3)) == [1, 2, 3]
+        assert _LangchainAgentCallback._to_jsonable((1, 2, 3)) == [1, 2, 3]
 
     def test_unserializable_object_falls_back_to_str(self):
         class Unserializable:
             def __repr__(self):
                 return "<Unserializable>"
 
-        assert _AgentGuardCallback._to_jsonable(Unserializable()) == "<Unserializable>"
+        assert _LangchainAgentCallback._to_jsonable(Unserializable()) == "<Unserializable>"
 
 
 # ---------------------------------------------------------------------------
@@ -191,32 +191,32 @@ class TestSerializeMessageObjAndMessages:
         ],
     )
     def test_known_message_type_prefixes(self, message, expected_prefix):
-        assert _AgentGuardCallback._serialize_message_obj(message) == f"{expected_prefix}: hi"
+        assert _LangchainAgentCallback._serialize_message_obj(message) == f"{expected_prefix}: hi"
 
     def test_unknown_message_type_falls_back_to_generic_prefix(self):
         class FakeMsg:
             type = "weird"
             content = "hello"
 
-        assert _AgentGuardCallback._serialize_message_obj(FakeMsg()) == "MESSAGE: hello"
+        assert _LangchainAgentCallback._serialize_message_obj(FakeMsg()) == "MESSAGE: hello"
 
     def test_non_message_falls_back_to_str(self):
-        assert _AgentGuardCallback._serialize_message_obj("plain string") == "plain string"
-        assert _AgentGuardCallback._serialize_message_obj(42) == "42"
+        assert _LangchainAgentCallback._serialize_message_obj("plain string") == "plain string"
+        assert _LangchainAgentCallback._serialize_message_obj(42) == "42"
 
     def test_non_str_content_is_json_encoded(self):
         msg = AIMessage(content=[{"type": "text", "text": "hi"}])
-        result = _AgentGuardCallback._serialize_message_obj(msg)
+        result = _LangchainAgentCallback._serialize_message_obj(msg)
         assert result.startswith("AI MESSAGE: ")
         assert json.loads(result[len("AI MESSAGE: "):]) == [{"type": "text", "text": "hi"}]
 
     def test_serialize_messages_returns_list_of_labeled_strings(self):
         messages = [SystemMessage(content="sys"), HumanMessage(content="hi")]
-        result = _AgentGuardCallback._serialize_messages(messages)
+        result = _LangchainAgentCallback._serialize_messages(messages)
         assert result == ["SYSTEM MESSAGE: sys", "HUMAN MESSAGE: hi"]
 
     def test_serialize_messages_handles_non_message_items(self):
-        assert _AgentGuardCallback._serialize_messages(["raw", 1]) == ["raw", "1"]
+        assert _LangchainAgentCallback._serialize_messages(["raw", 1]) == ["raw", "1"]
 
 
 # ---------------------------------------------------------------------------
@@ -698,24 +698,24 @@ class TestIsMcpToolOutput:
         msg = ToolMessage(
             content="hi", tool_call_id="1", artifact={"structured_content": {"a": 1}}
         )
-        assert _AgentGuardCallback._is_mcp_tool_output(msg) is True
+        assert _LangchainAgentCallback._is_mcp_tool_output(msg) is True
 
     def test_no_artifact_is_not_mcp(self):
         msg = ToolMessage(content="hi", tool_call_id="1")
-        assert _AgentGuardCallback._is_mcp_tool_output(msg) is False
+        assert _LangchainAgentCallback._is_mcp_tool_output(msg) is False
 
     def test_plain_string_output_is_not_mcp(self):
-        assert _AgentGuardCallback._is_mcp_tool_output("plain string") is False
+        assert _LangchainAgentCallback._is_mcp_tool_output("plain string") is False
 
     def test_non_dict_artifact_is_not_mcp(self):
         msg = ToolMessage(content="hi", tool_call_id="1", artifact="not-a-dict")
-        assert _AgentGuardCallback._is_mcp_tool_output(msg) is False
+        assert _LangchainAgentCallback._is_mcp_tool_output(msg) is False
 
     def test_dict_artifact_missing_structured_content_key_is_not_mcp(self):
         """Guards against false positives: some other, unrelated artifact
         shape that happens to be a dict must not be misdetected as MCP."""
         msg = ToolMessage(content="hi", tool_call_id="1", artifact={"other_key": {}})
-        assert _AgentGuardCallback._is_mcp_tool_output(msg) is False
+        assert _LangchainAgentCallback._is_mcp_tool_output(msg) is False
 
 
 class TestOnToolEndMcpDetection:
@@ -813,7 +813,7 @@ class TestOnChainStartRootReset:
         assert active_handler.trace_id == original_trace_id
 
     def test_reusing_handler_across_two_top_level_invocations_does_not_leak_events(self):
-        handler = _AgentGuardCallback(agent_name="reusable-agent")
+        handler = _LangchainAgentCallback(agent_name="reusable-agent")
 
         # First "graph.invoke()".
         run_1 = uuid.uuid4()
@@ -886,7 +886,7 @@ class TestOnChainStartLanggraphStep:
 
 class TestOnChainEndAutoEvaluate:
     def test_none_mode_never_calls_evaluate_confidence(self):
-        handler = _AgentGuardCallback(agent_name="a", observability_mode=ObservabilityMode.NONE)
+        handler = _LangchainAgentCallback(agent_name="a", observability_mode=ObservabilityMode.NONE)
         run_id = uuid.uuid4()
         handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
         with patch("trellar.agent_loop.evaluate_confidence") as mock_eval:
@@ -894,7 +894,7 @@ class TestOnChainEndAutoEvaluate:
         mock_eval.assert_not_called()
 
     def test_always_mode_calls_evaluate_confidence(self):
-        handler = _AgentGuardCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
+        handler = _LangchainAgentCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
         run_id = uuid.uuid4()
         handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
         with patch("trellar.agent_loop.evaluate_confidence") as mock_eval:
@@ -902,7 +902,7 @@ class TestOnChainEndAutoEvaluate:
         mock_eval.assert_called_once_with(_observability_call=True)
 
     def test_always_mode_calls_even_if_already_evaluated(self):
-        handler = _AgentGuardCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
+        handler = _LangchainAgentCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
         run_id = uuid.uuid4()
         handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
         handler._evaluated = True
@@ -911,7 +911,7 @@ class TestOnChainEndAutoEvaluate:
         mock_eval.assert_called_once()
 
     def test_if_not_evaluated_mode_calls_when_not_yet_evaluated(self):
-        handler = _AgentGuardCallback(agent_name="a", observability_mode=ObservabilityMode.IF_NOT_EVALUATED)
+        handler = _LangchainAgentCallback(agent_name="a", observability_mode=ObservabilityMode.IF_NOT_EVALUATED)
         run_id = uuid.uuid4()
         handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
         with patch("trellar.agent_loop.evaluate_confidence") as mock_eval:
@@ -919,7 +919,7 @@ class TestOnChainEndAutoEvaluate:
         mock_eval.assert_called_once()
 
     def test_if_not_evaluated_mode_skips_when_already_evaluated(self):
-        handler = _AgentGuardCallback(agent_name="a", observability_mode=ObservabilityMode.IF_NOT_EVALUATED)
+        handler = _LangchainAgentCallback(agent_name="a", observability_mode=ObservabilityMode.IF_NOT_EVALUATED)
         run_id = uuid.uuid4()
         handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
         handler._evaluated = True
@@ -928,7 +928,7 @@ class TestOnChainEndAutoEvaluate:
         mock_eval.assert_not_called()
 
     def test_non_root_chain_end_never_triggers_auto_eval(self):
-        handler = _AgentGuardCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
+        handler = _LangchainAgentCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
         root_run = uuid.uuid4()
         handler.on_chain_start({"name": "graph"}, {}, run_id=root_run, parent_run_id=None)
         sub_run = uuid.uuid4()
@@ -938,7 +938,7 @@ class TestOnChainEndAutoEvaluate:
         mock_eval.assert_not_called()
 
     def test_exception_from_evaluate_confidence_is_caught_and_logged(self):
-        handler = _AgentGuardCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
+        handler = _LangchainAgentCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
         run_id = uuid.uuid4()
         handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
         with patch("trellar.agent_loop.evaluate_confidence", side_effect=RuntimeError("backend down")):
@@ -1048,11 +1048,11 @@ class TestCurrentCallbackReleaseOnChainEnd:
         # Defends the `is self` identity guard: if something else has since
         # become the active handler, this handler's own root on_chain_end
         # must not blindly clear/overwrite that registration.
-        handler = _AgentGuardCallback(agent_name="a")
+        handler = _LangchainAgentCallback(agent_name="a")
         run_id = uuid.uuid4()
         handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
 
-        other = _AgentGuardCallback(agent_name="b")
+        other = _LangchainAgentCallback(agent_name="b")
         token = _current_callback.set(other)
         try:
             handler.on_chain_end({}, run_id=run_id, parent_run_id=None)
@@ -1081,11 +1081,11 @@ class TestCurrentCallbackReleaseOnChainError:
         assert _current_callback.get() is active_handler
 
     def test_root_chain_error_does_not_clobber_a_different_active_handler(self):
-        handler = _AgentGuardCallback(agent_name="a")
+        handler = _LangchainAgentCallback(agent_name="a")
         run_id = uuid.uuid4()
         handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
 
-        other = _AgentGuardCallback(agent_name="b")
+        other = _LangchainAgentCallback(agent_name="b")
         token = _current_callback.set(other)
         try:
             handler.on_chain_error(RuntimeError("boom"), run_id=run_id, parent_run_id=None)
@@ -1099,7 +1099,7 @@ class TestCurrentCallbackReleaseOnChainError:
         # RunnableSeq/Pregel invoke -- try/except/else around each run). A crash
         # must go through the error-path release, not silently rely on a
         # never-to-arrive on_chain_end.
-        handler = _AgentGuardCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
+        handler = _LangchainAgentCallback(agent_name="a", observability_mode=ObservabilityMode.ALWAYS)
         run_id = uuid.uuid4()
         handler.on_chain_start({"name": "graph"}, {}, run_id=run_id, parent_run_id=None)
 

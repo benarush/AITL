@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- The public factory functions are renamed to product-friendly names:
+  `get_agent_guard` -> `trellar_langchain_agent`,
+  `get_single_call_guard` -> `trellar_langchain_single_call`,
+  `get_strands_guard` -> `trellar_strands_agent`,
+  `get_strands_single_call_guard` -> `trellar_strands_single_call`.
+  Behavior and the payload sent to the back-end are unchanged.
+- Internal callback classes renamed accordingly (`_AgentGuardCallback` ->
+  `_LangchainAgentCallback`, `_SingleCallGuardCallback` ->
+  `_LangchainSingleCallCallback`, `_StrandsGuardCallback` ->
+  `_StrandsAgentCallback`, `_StrandsSingleCallGuardCallback` ->
+  `_StrandsSingleCallCallback`). These are not public API.
+
+### Deprecated
+- `get_agent_guard`, `get_single_call_guard`, `get_strands_guard` and
+  `get_strands_single_call_guard` still work but emit a `DeprecationWarning`
+  and will be removed in a future release.
+
 ## [0.6.1] - 2026-10-05
 
 ### Fixed

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import functools
 import logging
+import warnings
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, TYPE_CHECKING
@@ -11,9 +13,9 @@ from . import settings
 from ._context import _current_callback
 
 if TYPE_CHECKING:
-    from .callbacks.langchain.langchain_callback import _AgentGuardCallback
-    from .callbacks.langchain.single_langchain_callback import _SingleCallGuardCallback
-    from .callbacks.strands.strands_callback import _StrandsGuardCallback, _StrandsSingleCallGuardCallback
+    from .callbacks.langchain.langchain_callback import _LangchainAgentCallback
+    from .callbacks.langchain.single_langchain_callback import _LangchainSingleCallCallback
+    from .callbacks.strands.strands_callback import _StrandsAgentCallback, _StrandsSingleCallCallback
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +29,7 @@ class AgentLoopResult:
 
 
 class ObservabilityMode(str, Enum):
-    """Controls whether the guard auto-triggers ``evaluate_confidence()`` when
+    """Controls whether the Trellar agent auto-triggers ``evaluate_confidence()`` when
     the graph's root run finishes (i.e. ``graph.invoke()`` is about to return).
 
     * ``ALWAYS``           — always auto-call at the end of the run.
@@ -57,10 +59,10 @@ class NetworkHaltedError(Exception):
         )
 
 
-def get_agent_guard(
+def trellar_langchain_agent(
     agent_name: str,
     observability_mode: ObservabilityMode = ObservabilityMode.NONE,
-) -> "_AgentGuardCallback":
+) -> "_LangchainAgentCallback":
     """Create a callback handler that identifies this graph to the Trellar backend.
 
     ``agent_name`` must be a stable, unique name for this agent graph within
@@ -70,13 +72,13 @@ def get_agent_guard(
 
     Usage::
 
-        guard = get_agent_guard("research-agent")
+        trellar_agent = trellar_langchain_agent("research-agent")
 
         def confidence_gate(state):
             result = evaluate_confidence()
             ...
 
-        graph.invoke(input, config={"callbacks": [guard]})
+        graph.invoke(input, config={"callbacks": [trellar_agent]})
 
     ``evaluate_confidence()`` must be called from inside a graph node, while
     the run is still in progress — not after ``graph.invoke()`` returns. The
@@ -93,30 +95,30 @@ def get_agent_guard(
     Returns:
         An internal callback handler bound to the given agent name.
     """
-    from .callbacks.langchain.langchain_callback import _AgentGuardCallback
-    return _AgentGuardCallback(agent_name=agent_name, observability_mode=observability_mode)
+    from .callbacks.langchain.langchain_callback import _LangchainAgentCallback
+    return _LangchainAgentCallback(agent_name=agent_name, observability_mode=observability_mode)
 
 
-def get_single_call_guard(
+def trellar_langchain_single_call(
     agent_name: str,
     observability_mode: ObservabilityMode = ObservabilityMode.NONE,
-) -> "_SingleCallGuardCallback":
+) -> "_LangchainSingleCallCallback":
     """Create a callback handler for a single bare LLM call (no LangGraph/chain wrapper).
 
-    Use this instead of :func:`get_agent_guard` when you are calling a chat
+    Use this instead of :func:`trellar_langchain_agent` when you are calling a chat
     model directly (e.g. ``llm.invoke(...)``) rather than invoking a graph or
     an agent built with ``create_react_agent`` (which is itself a compiled
-    graph, and already works with :func:`get_agent_guard`).
+    graph, and already works with :func:`trellar_langchain_agent`).
 
     A bare ``llm.invoke()`` call has no node to call ``evaluate_confidence()``
     from mid-run, and the callback handler is released as soon as the call
     finishes — so a manual call is never supported here. Use
     ``observability_mode=ObservabilityMode.ALWAYS`` (or ``IF_NOT_EVALUATED``)
-    to auto-trigger the evaluation, then read the result off the guard::
+    to auto-trigger the evaluation, then read the result off the Trellar agent::
 
-        guard = get_single_call_guard("single-llm-call", ObservabilityMode.ALWAYS)
-        llm.invoke(messages, config={"callbacks": [guard]})
-        result = guard.trellar_evaluate_result
+        trellar_agent = trellar_langchain_single_call("single-llm-call", ObservabilityMode.ALWAYS)
+        llm.invoke(messages, config={"callbacks": [trellar_agent]})
+        result = trellar_agent.trellar_evaluate_result
 
     Args:
         agent_name: Unique, stable name for this agent within your repository.
@@ -130,51 +132,51 @@ def get_single_call_guard(
         ``trellar_evaluate_result``/``trellar_evaluate_error`` for reading the outcome of an
         auto-triggered evaluation.
     """
-    from .callbacks.langchain.single_langchain_callback import _SingleCallGuardCallback
-    return _SingleCallGuardCallback(agent_name=agent_name, observability_mode=observability_mode)
+    from .callbacks.langchain.single_langchain_callback import _LangchainSingleCallCallback
+    return _LangchainSingleCallCallback(agent_name=agent_name, observability_mode=observability_mode)
 
 
-def get_strands_guard(
+def trellar_strands_agent(
     agent_name: str,
     observability_mode: ObservabilityMode = ObservabilityMode.NONE,
-) -> "_StrandsGuardCallback":
+) -> "_StrandsAgentCallback":
     """Create a hook provider that identifies a Strands Agents network to Trellar.
 
-    Requires ``pip install "trellar[strands]"``. Register the same guard on every
+    Requires ``pip install "trellar[strands]"``. Register the same Trellar agent on every
     Agent and on the Graph/Swarm (so the whole run is one trace)::
 
-        guard = get_strands_guard("research-agent")
+        trellar_agent = trellar_strands_agent("research-agent")
 
-        agent = Agent(name="searcher", hooks=[guard])
-        graph = GraphBuilder()...set_hook_providers([guard]).build()
+        agent = Agent(name="searcher", hooks=[trellar_agent])
+        graph = GraphBuilder()...set_hook_providers([trellar_agent]).build()
 
     Give every agent a stable ``name``: it is how the backend tells agents apart.
-    As with :func:`get_agent_guard`, call :func:`evaluate_confidence` from inside
+    As with :func:`trellar_langchain_agent`, call :func:`evaluate_confidence` from inside
     the run (e.g. a graph node or a tool), not after it returns.
 
     Args:
         agent_name: Unique, stable name for this agent network.
         observability_mode: See :class:`ObservabilityMode`.
     """
-    from .callbacks.strands.strands_callback import _StrandsGuardCallback
-    return _StrandsGuardCallback(agent_name=agent_name, observability_mode=observability_mode)
+    from .callbacks.strands.strands_callback import _StrandsAgentCallback
+    return _StrandsAgentCallback(agent_name=agent_name, observability_mode=observability_mode)
 
 
-def get_strands_single_call_guard(
+def trellar_strands_single_call(
     agent_name: str,
     observability_mode: ObservabilityMode = ObservabilityMode.NONE,
-) -> "_StrandsSingleCallGuardCallback":
+) -> "_StrandsSingleCallCallback":
     """Create a hook provider for one Strands Agent called once (no Graph/Swarm).
 
     Requires ``pip install "trellar[strands]"``. The run is over when the call
     returns, so a manual :func:`evaluate_confidence` is not possible. Use
     ``ObservabilityMode.ALWAYS`` (or ``IF_NOT_EVALUATED``) and read the outcome
-    off the guard::
+    off the Trellar agent::
 
-        guard = get_strands_single_call_guard("faq-agent", ObservabilityMode.ALWAYS)
-        agent = Agent(name="faq", hooks=[guard])
+        trellar_agent = trellar_strands_single_call("faq-agent", ObservabilityMode.ALWAYS)
+        agent = Agent(name="faq", hooks=[trellar_agent])
         agent("What time does the office open?")
-        result = guard.trellar_evaluate_result
+        result = trellar_agent.trellar_evaluate_result
 
     Requests are marked ``single_call: true`` in the payload. Not covered:
     ``agent.structured_output()`` and calling a Strands ``Model`` directly
@@ -184,8 +186,35 @@ def get_strands_single_call_guard(
         agent_name: Unique, stable name for this agent.
         observability_mode: See :class:`ObservabilityMode`.
     """
-    from .callbacks.strands.strands_callback import _StrandsSingleCallGuardCallback
-    return _StrandsSingleCallGuardCallback(agent_name=agent_name, observability_mode=observability_mode)
+    from .callbacks.strands.strands_callback import _StrandsSingleCallCallback
+    return _StrandsSingleCallCallback(agent_name=agent_name, observability_mode=observability_mode)
+
+
+def _deprecated_alias(old_name: str, new_func):
+    """Build a deprecated alias that warns and forwards to ``new_func``."""
+
+    @functools.wraps(new_func)
+    def alias(*args, **kwargs):
+        warnings.warn(
+            f"{old_name}() is deprecated and will be removed in a future release; "
+            f"use {new_func.__name__}() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return new_func(*args, **kwargs)
+
+    alias.__name__ = old_name
+    alias.__qualname__ = old_name
+    alias.__doc__ = f"Deprecated alias of :func:`{new_func.__name__}`."
+    return alias
+
+
+get_agent_guard = _deprecated_alias("get_agent_guard", trellar_langchain_agent)
+get_single_call_guard = _deprecated_alias("get_single_call_guard", trellar_langchain_single_call)
+get_strands_guard = _deprecated_alias("get_strands_guard", trellar_strands_agent)
+get_strands_single_call_guard = _deprecated_alias(
+    "get_strands_single_call_guard", trellar_strands_single_call
+)
 
 
 def evaluate_confidence(
@@ -197,23 +226,23 @@ def evaluate_confidence(
     """Call the Trellar backend to get a confidence score.
 
     ``context``, ``trace_id``, and ``agent_name`` are all resolved automatically
-    from the active guard created by :func:`get_agent_guard` — no manual wiring needed.
+    from the active Trellar agent created by :func:`trellar_langchain_agent` — no manual wiring needed.
     Must be called from inside a graph node while the run is still in progress,
     not after ``graph.invoke()`` returns::
 
-        guard = get_agent_guard("research-agent")
+        trellar_agent = trellar_langchain_agent("research-agent")
 
         def confidence_gate(state):
             result = evaluate_confidence()
             ...
 
-        graph.invoke(input, config={"callbacks": [guard]})
+        graph.invoke(input, config={"callbacks": [trellar_agent]})
 
     Args:
         api_key:  Bearer token for authentication.
                   Defaults to the ``TRELLAR_API_KEY`` env var.
         timeout:  HTTP request timeout in seconds (default 30).
-        _observability_call: Internal — set by the guard's auto-trigger
+        _observability_call: Internal — set by the Trellar agent's auto-trigger
                   (see ``ObservabilityMode``) to mark the request as
                   automatic rather than a manual call. Not for external use.
 
@@ -229,13 +258,13 @@ def evaluate_confidence(
 
     if callback is None:
         raise ValueError(
-            "No active callback handler found. Use get_agent_guard() to create one "
+            "No active callback handler found. Use trellar_langchain_agent() to create one "
             "and pass it to graph.invoke() before calling evaluate_confidence()."
         )
 
     if not callback.trace_id:
         raise ValueError(
-            "trace_id could not be resolved. Make sure get_agent_guard() is passed to "
+            "trace_id could not be resolved. Make sure trellar_langchain_agent() is passed to "
             "graph.invoke() before calling evaluate_confidence()."
         )
     resolved_trace_id = str(callback.trace_id)
@@ -262,7 +291,7 @@ def evaluate_confidence(
         # One entry per distinct toolset bound during this run, keyed by a
         # content hash (not the model name) so the backend can correlate it
         # back to the exact SubAgent that declared it — see
-        # _AgentGuardCallback.available_tools / _hash_tools.
+        # _LangchainAgentCallback.available_tools / _hash_tools.
         "available_tools": [
             {"tools_hash": tools_hash, "tools": tools}
             for tools_hash, tools in callback.available_tools.items()

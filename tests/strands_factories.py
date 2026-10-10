@@ -56,6 +56,6 @@ class FakeModel(Model):
             yield chunk
 
 
-def events_of(guard, name: Optional[str] = None) -> list[dict]:
+def events_of(trellar_agent, name: Optional[str] = None) -> list[dict]:
     """Recorded events, optionally filtered by event name."""
-    return [e for e in guard.events if name is None or e["event"] == name]
+    return [e for e in trellar_agent.events if name is None or e["event"] == name]

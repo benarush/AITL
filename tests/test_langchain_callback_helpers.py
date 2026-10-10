@@ -235,7 +235,7 @@ class TestExtractModelName:
 # _serialize_message (module-level, dict-returning)
 # ---------------------------------------------------------------------------
 # NOTE: this function is currently unused anywhere in the codebase --
-# `_AgentGuardCallback` uses its own static methods (`_serialize_message_obj`
+# `_LangchainAgentCallback` uses its own static methods (`_serialize_message_obj`
 # / `_serialize_messages`) instead, which produce labeled strings rather than
 # dicts. Covered here so a future reintroduction doesn't silently regress.
 

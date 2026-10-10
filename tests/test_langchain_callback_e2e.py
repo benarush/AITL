@@ -1,11 +1,11 @@
 """End-to-end simulations of realistic multi-agent LangGraph runs against
-_AgentGuardCallback, mirroring the topologies in:
+_LangchainAgentCallback, mirroring the topologies in:
 
   - orchestrations_examples/our_lab_with_aviran/l3_healthcare_prior_authorization/healthcare_prior_authorization.py
   - orchestrations_examples/our_lab_with_aviran/curcurent_network/supply_chain_network.py
 
 Real LLM calls require network/API keys, so "e2e" here means: drive
-_AgentGuardCallback through the exact sequence of callback invocations
+_LangchainAgentCallback through the exact sequence of callback invocations
 LangGraph/LangChain would fire for these topologies (using fake
 AIMessage/LLMResult objects via ScriptedRun), then assert on the resulting
 event list, build_context() output, and auto-eval side effects as a whole --
@@ -20,7 +20,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
 from trellar import ObservabilityMode
-from trellar.callbacks.langchain.langchain_callback import _AgentGuardCallback
+from trellar.callbacks.langchain.langchain_callback import _LangchainAgentCallback
 
 from tests.factories import ScriptedRun, make_ai_message, make_llm_result
 
@@ -42,7 +42,7 @@ class _FakeClinicalDecision(BaseModel):
 
 class TestSequentialPipelineE2E:
     def test_full_sequential_run_with_structured_output_and_tool_error(self):
-        handler = _AgentGuardCallback(agent_name="healthcare-e2e", observability_mode=ObservabilityMode.ALWAYS)
+        handler = _LangchainAgentCallback(agent_name="healthcare-e2e", observability_mode=ObservabilityMode.ALWAYS)
         script = ScriptedRun(handler)
 
         root = script.chain_start(name="LangGraph", parent=None, inputs={"request": "auth request"})
@@ -154,7 +154,7 @@ class TestFanOutFanInParallelE2E:
         callback's own event bookkeeping (self.events / parent_run_id
         linkage) is not the source of the cross-wiring the investigation
         found -- the corruption must be entirely on the backend side."""
-        handler = _AgentGuardCallback(agent_name="supply-chain-e2e")
+        handler = _LangchainAgentCallback(agent_name="supply-chain-e2e")
         script = ScriptedRun(handler)
 
         root = script.chain_start(name="LangGraph", parent=None, inputs={"incident_id": "INC-1"})
@@ -250,7 +250,7 @@ class TestFanOutFanInParallelE2E:
 
 class TestMultiInvocationReuseE2E:
     def test_second_invocation_does_not_leak_first_run_state(self):
-        handler = _AgentGuardCallback(agent_name="reuse-e2e")
+        handler = _LangchainAgentCallback(agent_name="reuse-e2e")
         script = ScriptedRun(handler)
 
         # --- First graph.invoke() ---
@@ -290,7 +290,7 @@ class TestMultiInvocationReuseE2E:
 
 class TestToolErrorMidRunE2E:
     def test_branch_tool_error_alongside_sibling_success(self):
-        handler = _AgentGuardCallback(agent_name="tool-error-e2e")
+        handler = _LangchainAgentCallback(agent_name="tool-error-e2e")
         script = ScriptedRun(handler)
 
         root = script.chain_start(name="LangGraph", parent=None)
