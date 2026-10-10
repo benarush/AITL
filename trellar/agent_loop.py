@@ -101,7 +101,7 @@ def trellar_langchain_agent(
 
 def trellar_langchain_single_call(
     agent_name: str,
-    observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+    observability_mode: ObservabilityMode = ObservabilityMode.ALWAYS,
 ) -> "_LangchainSingleCallCallback":
     """Create a callback handler for a single bare LLM call (no LangGraph/chain wrapper).
 
@@ -112,11 +112,11 @@ def trellar_langchain_single_call(
 
     A bare ``llm.invoke()`` call has no node to call ``evaluate_confidence()``
     from mid-run, and the callback handler is released as soon as the call
-    finishes — so a manual call is never supported here. Use
-    ``observability_mode=ObservabilityMode.ALWAYS`` (or ``IF_NOT_EVALUATED``)
-    to auto-trigger the evaluation, then read the result off the Trellar agent::
+    finishes — so a manual call is never supported here. The evaluation is
+    therefore triggered automatically (``ObservabilityMode.ALWAYS`` is the default
+    here). Read the result off the Trellar agent::
 
-        trellar_agent = trellar_langchain_single_call("single-llm-call", ObservabilityMode.ALWAYS)
+        trellar_agent = trellar_langchain_single_call("single-llm-call")
         llm.invoke(messages, config={"callbacks": [trellar_agent]})
         result = trellar_agent.trellar_evaluate_result
 
@@ -124,8 +124,8 @@ def trellar_langchain_single_call(
         agent_name: Unique, stable name for this agent within your repository.
         observability_mode: Controls whether ``evaluate_confidence()`` is
             auto-triggered when the LLM call finishes. See
-            :class:`ObservabilityMode`. Defaults to ``ObservabilityMode.NONE``
-            (no auto-trigger).
+            :class:`ObservabilityMode`. Defaults to ``ObservabilityMode.ALWAYS``
+            (pass ``NONE`` to record without evaluating).
 
     Returns:
         An internal callback handler bound to the given agent name. Exposes
@@ -167,16 +167,16 @@ def trellar_strands_agent(
 
 def trellar_strands_single_call(
     agent_name: str,
-    observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+    observability_mode: ObservabilityMode = ObservabilityMode.ALWAYS,
 ) -> "_StrandsSingleCallCallback":
     """Create a hook provider for one Strands Agent called once (no Graph/Swarm).
 
     Requires ``pip install "trellar[strands]"``. The run is over when the call
-    returns, so a manual :func:`evaluate_confidence` is not possible. Use
-    ``ObservabilityMode.ALWAYS`` (or ``IF_NOT_EVALUATED``) and read the outcome
-    off the Trellar agent::
+    returns, so a manual :func:`evaluate_confidence` is not possible; the run is
+    therefore evaluated automatically (``ObservabilityMode.ALWAYS`` is the default
+    here). Read the outcome off the Trellar agent::
 
-        trellar_agent = trellar_strands_single_call("faq-agent", ObservabilityMode.ALWAYS)
+        trellar_agent = trellar_strands_single_call("faq-agent")
         agent = Agent(name="faq", hooks=[trellar_agent])
         agent("What time does the office open?")
         result = trellar_agent.trellar_evaluate_result
@@ -187,7 +187,8 @@ def trellar_strands_single_call(
 
     Args:
         agent_name: Unique, stable name for this agent.
-        observability_mode: See :class:`ObservabilityMode`.
+        observability_mode: See :class:`ObservabilityMode`. Defaults to ``ALWAYS``
+            (pass ``NONE`` to record without evaluating).
     """
     from .callbacks.strands.strands_callback import _StrandsSingleCallCallback
     return _StrandsSingleCallCallback(agent_name=agent_name, observability_mode=observability_mode)

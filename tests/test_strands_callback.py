@@ -648,8 +648,16 @@ class TestSingleCall:
         assert first is not None
         assert trellar_agent.trellar_evaluate_result is None
 
-    def test_none_mode_does_not_evaluate(self, mock_post):
+    def test_default_mode_evaluates(self, mock_post):
+        # No mode passed: a single call can't be evaluated manually, so it defaults to ALWAYS.
         trellar_agent = trellar_strands_single_call("t")
+        make_agent(trellar_agent, [text_turn("hi")])("go")
+
+        mock_post.assert_called_once()
+        assert trellar_agent.trellar_evaluate_result.score == 8
+
+    def test_none_mode_does_not_evaluate(self, mock_post):
+        trellar_agent = trellar_strands_single_call("t", ObservabilityMode.NONE)
         make_agent(trellar_agent, [text_turn("hi")])("go")
 
         mock_post.assert_not_called()

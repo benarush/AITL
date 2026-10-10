@@ -87,9 +87,10 @@ pip install "trellar[strands]"   # requires Python 3.10+
 ```python
 from strands import Agent
 from strands.multiagent import GraphBuilder
-from trellar import trellar_strands_agent, evaluate_confidence
+from trellar import trellar_strands_agent, ObservabilityMode
 
-trellar_agent = trellar_strands_agent("research-agent")
+# ALWAYS: the run is evaluated automatically when it finishes (no manual call needed).
+trellar_agent = trellar_strands_agent("research-agent", ObservabilityMode.ALWAYS)
 
 # Give every agent a stable name.
 searcher = Agent(name="searcher")
@@ -108,19 +109,19 @@ graph = builder.build()
 graph("Find me something to report on")
 ```
 
-A standalone Agent (no Graph/Swarm) still needs `Agent(hooks=[trellar_agent])`. Passing it explicitly to a graph's Agents as well is harmless: registering twice is a no-op. Once bound, an Agent keeps the hook (Strands cannot remove it).
+A standalone Agent (no Graph/Swarm) still needs `Agent(hooks=[trellar_agent])`. Passing it to a graph's Agents as well is harmless.
 
-Call `evaluate_confidence()` from inside the run (a graph node or a tool), exactly as with LangChain. `ObservabilityMode` works the same way. See `orchestrations_examples/our_lab_with_aviran/car_stocks_buy_mcp_celery.py/car_stocks_buy_from_remote_provider_orchestration_strands.py` for a full example.
+With `ObservabilityMode.ALWAYS` (as above) nothing else is needed. Without an `ObservabilityMode`, nothing is evaluated unless you call `evaluate_confidence()` from inside the run (a graph node or a tool), exactly as with LangChain. See `orchestrations_examples/our_lab_with_aviran/car_stocks_buy_mcp_celery.py/car_stocks_buy_from_remote_provider_orchestration_strands.py` for a full example.
 
 ### `trellar_strands_single_call`
 
-For one Agent called once (no Graph/Swarm). The run is over when the call returns, so use `ObservabilityMode.ALWAYS` (or `IF_NOT_EVALUATED`) and read the result off the Trellar agent:
+For one Agent called once (no Graph/Swarm). The run is over when the call returns, so a manual `evaluate_confidence()` isn't possible: the run is evaluated automatically (`ObservabilityMode.ALWAYS` is the default here; pass `ObservabilityMode.NONE` to only record). Read the result off the Trellar agent:
 
 ```python
 from strands import Agent
-from trellar import trellar_strands_single_call, ObservabilityMode
+from trellar import trellar_strands_single_call
 
-trellar_agent = trellar_strands_single_call("faq-agent", ObservabilityMode.ALWAYS)
+trellar_agent = trellar_strands_single_call("faq-agent")
 agent = Agent(name="faq_agent", hooks=[trellar_agent])
 agent("What time does the office open?")
 
@@ -128,7 +129,7 @@ result = trellar_agent.trellar_evaluate_result   # AgentLoopResult, or None
 error = trellar_agent.trellar_evaluate_error     # the exception, if the auto-triggered call failed
 ```
 
-Requests are marked `single_call: true` in the payload. Not covered: `agent.structured_output()` and calling a Strands `Model` directly — Strands fires no model-call hooks for them. See `orchestrations_examples/our_lab_with_aviran/single_llm_agent/simple_llm_call_strands.py`.
+Requests are marked `single_call: true` in the payload. Not covered: `agent.structured_output()` and calling a Strands `Model` directly. See `orchestrations_examples/our_lab_with_aviran/single_llm_agent/simple_llm_call_strands.py`.
 
 ---
 
@@ -244,18 +245,18 @@ Requests triggered this way are marked in the payload sent to the backend with `
 ```python
 trellar_langchain_single_call(
     agent_name: str,
-    observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+    observability_mode: ObservabilityMode = ObservabilityMode.ALWAYS,
 ) -> BaseCallbackHandler
 ```
 
 Use this instead of `trellar_langchain_agent` when you are calling a chat model directly (`llm.invoke(...)`) with no wrapping LangGraph/chain. Agents built with `create_react_agent` are already compiled graphs under the hood, so they work with `trellar_langchain_agent` as usual — `trellar_langchain_single_call` is only for a genuinely bare model call.
 
-A bare `llm.invoke()` call has no node to call `evaluate_confidence()` from mid-run, and the callback handler is released as soon as the call finishes — so a manual call is never supported here. Use `ObservabilityMode.ALWAYS` (or `IF_NOT_EVALUATED`) to auto-trigger the evaluation, then read the result back from the Trellar agent:
+A bare `llm.invoke()` call has no node to call `evaluate_confidence()` from mid-run, and the callback handler is released as soon as the call finishes — so a manual call is never supported here. The run is evaluated automatically (`ObservabilityMode.ALWAYS` is the default here; pass `ObservabilityMode.NONE` to only record). Read the result back from the Trellar agent:
 
 ```python
-from trellar import trellar_langchain_single_call, ObservabilityMode
+from trellar import trellar_langchain_single_call
 
-trellar_agent = trellar_langchain_single_call("single-llm-call", ObservabilityMode.ALWAYS)
+trellar_agent = trellar_langchain_single_call("single-llm-call")
 llm.invoke(messages, config={"callbacks": [trellar_agent]})
 
 result = trellar_agent.trellar_evaluate_result   # AgentLoopResult, or None if not yet evaluated
