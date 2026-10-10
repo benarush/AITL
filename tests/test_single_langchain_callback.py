@@ -140,6 +140,32 @@ class TestAutoEvaluateTrigger:
         mock_eval.assert_not_called()
         assert single_call_handler.trellar_evaluate_result is None
 
+    def test_factory_defaults_to_always(self):
+        # No mode passed: a bare call can't be evaluated manually, so it defaults to ALWAYS.
+        from trellar import trellar_langchain_single_call
+
+        token = _current_callback.set(None)
+        try:
+            handler = trellar_langchain_single_call("a")
+            with patch("trellar.agent_loop.evaluate_confidence", return_value=_fake_result()) as mock_eval:
+                self._run_one_call(handler)
+            mock_eval.assert_called_once_with(_observability_call=True)
+            assert handler.trellar_evaluate_result == _fake_result()
+        finally:
+            _current_callback.reset(token)
+
+    def test_factory_none_mode_never_evaluates(self):
+        from trellar import trellar_langchain_single_call
+
+        token = _current_callback.set(None)
+        try:
+            handler = trellar_langchain_single_call("a", ObservabilityMode.NONE)
+            with patch("trellar.agent_loop.evaluate_confidence") as mock_eval:
+                self._run_one_call(handler)
+            mock_eval.assert_not_called()
+        finally:
+            _current_callback.reset(token)
+
     def test_always_mode_calls_evaluate_confidence_and_stores_trellar_evaluate_result(self):
         token = _current_callback.set(None)
         try:
