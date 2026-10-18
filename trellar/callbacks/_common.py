@@ -1,9 +1,29 @@
 """Framework-neutral helpers shared by the LangChain and Strands callbacks."""
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
-from typing import Any, Optional
+import logging
+from typing import Any, Callable, Optional
+
+logger = logging.getLogger(__name__)
+
+
+def guarded(fn: Callable[..., None]) -> Callable[..., None]:
+    """Wrap a framework hook so it can never raise into the host application.
+
+    Telemetry must not break the client's agent: an error is logged and swallowed.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> None:
+        try:
+            fn(*args, **kwargs)
+        except Exception:
+            logger.warning("Trellar hook %s failed", fn.__name__, exc_info=True)
+
+    return wrapper
 
 
 def compact_json(value: Any) -> str:

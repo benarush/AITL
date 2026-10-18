@@ -240,6 +240,35 @@ class TestSingleAgent:
 
 
 # ---------------------------------------------------------------------------
+# Hook safety: Strands does not catch hook exceptions, so Trellar must never raise
+# ---------------------------------------------------------------------------
+
+class TestHookSafety:
+    @pytest.fixture(autouse=True)
+    def _break_recording(self, monkeypatch):
+        def broken(*args, **kwargs):
+            raise RuntimeError("trellar bug")
+
+        monkeypatch.setattr(trellar_strands_agent("probe").__class__, "_record", broken)
+
+    def test_single_agent_run_completes_when_recording_raises(self, caplog):
+        trellar_agent = trellar_strands_agent("t")
+        agent = make_agent(trellar_agent, [tool_turn("add", {"a": 1, "b": 2}), text_turn("3")], tools=[add])
+
+        result = agent("1+2?")
+
+        assert "3" in str(result)
+        assert "Trellar hook" in caplog.text
+
+    def test_graph_run_completes_when_recording_raises(self, caplog):
+        trellar_agent = trellar_strands_agent("t")
+
+        build_graph(trellar_agent, lambda: None)("go")
+
+        assert "Trellar hook" in caplog.text
+
+
+# ---------------------------------------------------------------------------
 # LLM human input (history folding)
 # ---------------------------------------------------------------------------
 

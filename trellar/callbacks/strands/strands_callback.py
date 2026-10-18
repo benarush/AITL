@@ -34,7 +34,7 @@ from strands.tools.mcp.mcp_agent_tool import MCPAgentTool
 
 from ..._context import _current_callback
 from ...agent_loop import ObservabilityMode
-from .._common import build_context, compact_json, hash_tools, to_jsonable
+from .._common import build_context, compact_json, guarded, hash_tools, to_jsonable
 from .utils import _last_user_text, _llm_human_input, _model_name, _openai_tools, _text_of_blocks
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,20 @@ class _StrandsAgentCallback(HookProvider):
     Agent is then bound automatically when its node starts. A standalone Agent (no
     Graph) still needs ``Agent(hooks=[trellar_agent])``. Registering twice is safe.
     """
+
+    # Strands event -> handler method name (registered through ``guarded``).
+    _HOOKS = {
+        BeforeMultiAgentInvocationEvent: "_on_multi_start",
+        AfterMultiAgentInvocationEvent: "_on_multi_end",
+        BeforeNodeCallEvent: "_on_node_start",
+        AfterNodeCallEvent: "_on_node_end",
+        BeforeInvocationEvent: "_on_agent_start",
+        AfterInvocationEvent: "_on_agent_end",
+        BeforeModelCallEvent: "_on_model_start",
+        AfterModelCallEvent: "_on_model_end",
+        BeforeToolCallEvent: "_on_tool_start",
+        AfterToolCallEvent: "_on_tool_end",
+    }
 
     def __init__(
         self,
@@ -174,16 +188,9 @@ class _StrandsAgentCallback(HookProvider):
             if registry in self._registries:
                 return
             self._registries.add(registry)
-        registry.add_callback(BeforeMultiAgentInvocationEvent, self._on_multi_start)
-        registry.add_callback(AfterMultiAgentInvocationEvent, self._on_multi_end)
-        registry.add_callback(BeforeNodeCallEvent, self._on_node_start)
-        registry.add_callback(AfterNodeCallEvent, self._on_node_end)
-        registry.add_callback(BeforeInvocationEvent, self._on_agent_start)
-        registry.add_callback(AfterInvocationEvent, self._on_agent_end)
-        registry.add_callback(BeforeModelCallEvent, self._on_model_start)
-        registry.add_callback(AfterModelCallEvent, self._on_model_end)
-        registry.add_callback(BeforeToolCallEvent, self._on_tool_start)
-        registry.add_callback(AfterToolCallEvent, self._on_tool_end)
+        # Strands does not catch hook exceptions, so every handler is wrapped in ``guarded``.
+        for event_type, handler_name in self._HOOKS.items():
+            registry.add_callback(event_type, guarded(getattr(self, handler_name)))
 
     # ------------------------------------------------------------------
     # Graph / Swarm events
