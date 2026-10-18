@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-18
+
+### Fixed
+- Strands: every Trellar hook handler is now wrapped in a `guarded` helper, so an
+  error inside telemetry is logged and swallowed instead of raising into the host
+  application (Strands does not catch hook exceptions itself).
+
 ## [0.7.0] - 2026-10-10
 
 ### Added
