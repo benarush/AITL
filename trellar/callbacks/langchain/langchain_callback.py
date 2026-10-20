@@ -8,7 +8,13 @@ from langchain_core.outputs import LLMResult
 
 from ..._context import _current_callback
 from ...agent_loop import ObservabilityMode
-from .._common import build_context, compact_json as _compact_json, hash_tools as _hash_tools
+from .._common import (
+    build_context,
+    compact_json as _compact_json,
+    hash_tools as _hash_tools,
+    mark_start as _mark_start,
+    pop_elapsed as _pop_elapsed,
+)
 from .utils import _content_to_str, _extract_llm_input, _extract_model_name
 
 logger = logging.getLogger(__name__)
@@ -36,6 +42,9 @@ class _LangchainAgentCallback(BaseCallbackHandler):
     * extra payload fields depending on the event type, notably
       ``is_mcp_tool`` (bool) on ``on_tool_end`` events — see
       :meth:`_is_mcp_tool_output` for what this does and does not detect.
+    * ``duration_seconds`` – wall time (seconds, 3 decimals) the model/tool call
+      took, on ``on_llm_end`` / ``on_llm_error`` / ``on_tool_end`` /
+      ``on_tool_error`` events.
     """
 
     # Maps the LangChain message `type` attribute to a human-readable prefix.
@@ -147,6 +156,8 @@ class _LangchainAgentCallback(BaseCallbackHandler):
         self._evaluated: bool = False
         # run_id (str) -> {"name": str, "type": str}
         self._run_registry: dict[str, dict[str, Any]] = {}
+        # run_id (str) -> perf_counter() at model/tool start, for duration_seconds
+        self._start_times: dict[str, float] = {}
         # LLM events that requested tool calls and are still awaiting the
         # corresponding tool outputs. Each entry:
         #   {"event": <recorded event dict>, "parent_run_id": str | None,
@@ -244,6 +255,7 @@ class _LangchainAgentCallback(BaseCallbackHandler):
     ) -> None:
         model = _extract_model_name(serialized)
         self._register(run_id, model, "llm")
+        _mark_start(self._start_times, run_id)
         self._record(
             "on_llm_start",
             run_id,
@@ -269,6 +281,7 @@ class _LangchainAgentCallback(BaseCallbackHandler):
             tools_hash = _hash_tools(jsonable_tools)
             self.available_tools[tools_hash] = jsonable_tools
         self._register(run_id, model, "llm")
+        _mark_start(self._start_times, run_id)
 
         # messages is list[list[BaseMessage]] — one inner list per prompt batch item.
         # Use the first batch to extract system/human fields.
@@ -353,6 +366,7 @@ class _LangchainAgentCallback(BaseCallbackHandler):
             parent_run_id,
             output={"response": response_text},
             token_usage=token_usage,
+            duration_seconds=_pop_elapsed(self._start_times, run_id),
         )
 
         if tool_calls:
@@ -376,7 +390,13 @@ class _LangchainAgentCallback(BaseCallbackHandler):
         parent_run_id: Optional[uuid.UUID] = None,
         **kwargs: Any,
     ) -> None:
-        self._record("on_llm_error", run_id, parent_run_id, error=str(error))
+        self._record(
+            "on_llm_error",
+            run_id,
+            parent_run_id,
+            error=str(error),
+            duration_seconds=_pop_elapsed(self._start_times, run_id),
+        )
 
     # ------------------------------------------------------------------
     # Tool events
@@ -394,6 +414,7 @@ class _LangchainAgentCallback(BaseCallbackHandler):
         tool_name = serialized.get("name")
         tool_description = serialized.get("description")
         self._register(run_id, tool_name, "tool")
+        _mark_start(self._start_times, run_id)
 
         # ``inputs`` kwarg carries the parsed argument dict when available.
         parsed_inputs = kwargs.get("inputs")
@@ -426,7 +447,12 @@ class _LangchainAgentCallback(BaseCallbackHandler):
         is_mcp_tool = self._is_mcp_tool_output(output)
         serialized_output = self._serialize_message_obj(output)
         self._record(
-            "on_tool_end", run_id, parent_run_id, output=serialized_output, is_mcp_tool=is_mcp_tool
+            "on_tool_end",
+            run_id,
+            parent_run_id,
+            output=serialized_output,
+            is_mcp_tool=is_mcp_tool,
+            duration_seconds=_pop_elapsed(self._start_times, run_id),
         )
         tool_name = self._run_registry.get(str(run_id), {}).get("name")
         self._attach_tool_response_to_llm(tool_name, serialized_output, parent_run_id)
@@ -479,7 +505,13 @@ class _LangchainAgentCallback(BaseCallbackHandler):
         parent_run_id: Optional[uuid.UUID] = None,
         **kwargs: Any,
     ) -> None:
-        self._record("on_tool_error", run_id, parent_run_id, error=str(error))
+        self._record(
+            "on_tool_error",
+            run_id,
+            parent_run_id,
+            error=str(error),
+            duration_seconds=_pop_elapsed(self._start_times, run_id),
+        )
 
     # ------------------------------------------------------------------
     # Chain / Graph node events
@@ -504,6 +536,7 @@ class _LangchainAgentCallback(BaseCallbackHandler):
             self.events = []
             self._step = 0
             self._run_registry = {}
+            self._start_times = {}
             self._pending_llm_tool_calls = []
             self.available_tools = {}
             self._evaluated = False

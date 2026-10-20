@@ -5,9 +5,26 @@ import functools
 import hashlib
 import json
 import logging
+import time
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def mark_start(start_times: dict[str, float], run_id: Any) -> None:
+    """Record a monotonic start timestamp for *run_id*."""
+    start_times[str(run_id)] = time.perf_counter()
+
+
+def pop_elapsed(start_times: dict[str, float], run_id: Any) -> Optional[float]:
+    """Return seconds elapsed since :func:`mark_start` for *run_id* (3 decimals).
+
+    Removes the entry so nothing leaks; returns ``None`` if no start was recorded.
+    """
+    started = start_times.pop(str(run_id), None)
+    if started is None:
+        return None
+    return round(time.perf_counter() - started, 3)
 
 
 def guarded(fn: Callable[..., None]) -> Callable[..., None]:
@@ -95,6 +112,8 @@ def build_context(events: list[dict[str, Any]], trace_id: Optional[Any]) -> str:
             lines.append(f"  response: {out.get('response', '')}")
             if usage:
                 lines.append(f"  token_usage: {compact_json(usage)}")
+            if event.get("duration_seconds") is not None:
+                lines.append(f"  duration: {event['duration_seconds']}s")
 
         elif event_name == "on_tool_start":
             lines.append(f"  tool: {event.get('tool', '')}")
@@ -104,6 +123,8 @@ def build_context(events: list[dict[str, Any]], trace_id: Optional[Any]) -> str:
             # MCP provenance is signal for the confidence evaluator, not noise.
             via_mcp = " (via MCP)" if event.get("is_mcp_tool") else ""
             lines.append(f"  output{via_mcp}: {compact_json(event.get('output', ''))}")
+            if event.get("duration_seconds") is not None:
+                lines.append(f"  duration: {event['duration_seconds']}s")
 
         elif event_name == "on_chain_start":
             lines.append(f"  inputs: {compact_json(event.get('inputs', {}))}")

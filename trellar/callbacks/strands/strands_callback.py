@@ -34,7 +34,15 @@ from strands.tools.mcp.mcp_agent_tool import MCPAgentTool
 
 from ..._context import _current_callback
 from ...agent_loop import ObservabilityMode
-from .._common import build_context, compact_json, guarded, hash_tools, to_jsonable
+from .._common import (
+    build_context,
+    compact_json,
+    guarded,
+    hash_tools,
+    mark_start,
+    pop_elapsed,
+    to_jsonable,
+)
 from .utils import _last_user_text, _llm_human_input, _model_name, _openai_tools, _text_of_blocks
 
 logger = logging.getLogger(__name__)
@@ -99,6 +107,7 @@ class _StrandsAgentCallback(HookProvider):
         self._evaluated = False
         self._root_run_id = root_run_id
         self._parents: dict[str, Optional[str]] = {}  # chain/tool run_id -> parent run_id
+        self._start_times: dict[str, float] = {}  # model/tool run_id -> perf_counter() at start
         self._agent_runs: dict[int, str] = {}  # id(agent) -> open invocation run_id
         self._model_runs: dict[int, str] = {}  # id(agent) -> open model-call run_id
         self._tool_runs: dict[str, str] = {}  # toolUseId -> open tool run_id
@@ -258,6 +267,7 @@ class _StrandsAgentCallback(HookProvider):
 
         model = _model_name(agent)
         self._parents[run_id] = self._agent_runs.get(id(agent), self._root_run_id)
+        mark_start(self._start_times, run_id)
         self._record(
             "on_chat_model_start",
             run_id,
@@ -277,8 +287,14 @@ class _StrandsAgentCallback(HookProvider):
         parent = self._parents.get(run_id)
         model = _model_name(agent)
 
+        duration = pop_elapsed(self._start_times, run_id)
+
         if event.exception is not None or event.stop_response is None:
-            self._record("on_llm_error", run_id, parent, model, "llm", error=str(event.exception))
+            self._record(
+                "on_llm_error", run_id, parent, model, "llm",
+                error=str(event.exception),
+                duration_seconds=duration,
+            )
             return
 
         # Fold tool calls into the response text (same shape as the LangChain callback);
@@ -293,6 +309,7 @@ class _StrandsAgentCallback(HookProvider):
             "on_llm_end", run_id, parent, model, "llm",
             output={"response": "\n".join(parts)},
             token_usage=None,
+            duration_seconds=duration,
         )
         for tu in tool_uses:
             self._tool_llm_event[tu["toolUseId"]] = record
@@ -308,6 +325,7 @@ class _StrandsAgentCallback(HookProvider):
         self._tool_runs[tool_use["toolUseId"]] = run_id
         self._parents[run_id] = parent
         _current_run.set(run_id)  # agents-as-tools nest under this tool call
+        mark_start(self._start_times, run_id)
 
         tool_input = tool_use.get("input")
         description = event.selected_tool.tool_spec.get("description") if event.selected_tool else None
@@ -327,9 +345,14 @@ class _StrandsAgentCallback(HookProvider):
         parent = self._parents.get(run_id)
         name = tool_use["name"]
         _current_run.set(parent)
+        duration = pop_elapsed(self._start_times, run_id)
 
         if event.exception is not None:
-            self._record("on_tool_error", run_id, parent, name, "tool", error=str(event.exception))
+            self._record(
+                "on_tool_error", run_id, parent, name, "tool",
+                error=str(event.exception),
+                duration_seconds=duration,
+            )
             return
 
         output = _text_of_blocks(event.result.get("content"))
@@ -337,6 +360,7 @@ class _StrandsAgentCallback(HookProvider):
             "on_tool_end", run_id, parent, name, "tool",
             output=output,
             is_mcp_tool=isinstance(event.selected_tool, MCPAgentTool),
+            duration_seconds=duration,
         )
 
         # Attach the tool's output to the LLM event that requested it.
