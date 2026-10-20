@@ -305,10 +305,15 @@ class _StrandsAgentCallback(HookProvider):
         for tu in tool_uses:
             parts.append(f"TOOL CALL: {tu['name']}(args={compact_json(tu.get('input'))})")
 
+        # Strands attaches the call's usage to the message before firing this hook.
+        usage = (event.stop_response.message.get("metadata") or {}).get("usage") or {}
+
         record = self._record(
             "on_llm_end", run_id, parent, model, "llm",
             output={"response": "\n".join(parts)},
             token_usage=None,
+            input_tokens=usage.get("inputTokens"),
+            output_tokens=usage.get("outputTokens"),
             duration_seconds=duration,
         )
         for tu in tool_uses:

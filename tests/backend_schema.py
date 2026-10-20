@@ -58,6 +58,8 @@ class OnLlmEnd(_Base):
     event: Literal["on_llm_end"]
     output: LLMOutput
     token_usage: Optional[Any] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
 
 
 class OnToolStart(_Base):

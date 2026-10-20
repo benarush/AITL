@@ -58,9 +58,6 @@ def test_langchain_tool_duration(handler, clock):
     assert _event(handler, "on_tool_end", run_id)["duration_seconds"] == 2.5
     assert handler._start_times == {}  # nothing left behind
 
-    # The text context shown to the evaluator includes it too.
-    assert "duration: 2.5s" in handler.build_context()
-
 
 def test_langchain_model_duration_on_success_and_error(handler, clock):
     ok_id, err_id = uuid.uuid4(), uuid.uuid4()

@@ -15,7 +15,7 @@ from .._common import (
     mark_start as _mark_start,
     pop_elapsed as _pop_elapsed,
 )
-from .utils import _content_to_str, _extract_llm_input, _extract_model_name
+from .utils import _content_to_str, _extract_llm_input, _extract_model_name, _extract_token_counts
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,8 @@ class _LangchainAgentCallback(BaseCallbackHandler):
     * extra payload fields depending on the event type, notably
       ``is_mcp_tool`` (bool) on ``on_tool_end`` events — see
       :meth:`_is_mcp_tool_output` for what this does and does not detect.
+    * ``input_tokens`` / ``output_tokens`` – tokens the model call used (``None`` if the
+      provider reported none), on ``on_llm_end`` events.
     * ``duration_seconds`` – wall time (seconds, 3 decimals) the model/tool call
       took, on ``on_llm_end`` / ``on_llm_error`` / ``on_tool_end`` /
       ``on_tool_error`` events.
@@ -311,6 +313,7 @@ class _LangchainAgentCallback(BaseCallbackHandler):
         #   - Dicts produced by Phoenix instrumentation wrapping
         response_text: str = ""
         tool_calls: list[Any] = []
+        usage_metadata: Any = None
         if response.generations:
             first_batch = response.generations[0]
             if first_batch:
@@ -320,6 +323,7 @@ class _LangchainAgentCallback(BaseCallbackHandler):
                 message = getattr(gen, "message", None)
                 if message is not None:
                     tool_calls = getattr(message, "tool_calls", None) or []
+                    usage_metadata = getattr(message, "usage_metadata", None)
                     content = getattr(message, "content", None)
                     if content is not None:
                         response_text = _content_to_str(content)
@@ -347,6 +351,7 @@ class _LangchainAgentCallback(BaseCallbackHandler):
         token_usage = (response.llm_output or {}).get("token_usage") or (
             response.llm_output or {}
         ).get("usage")
+        input_tokens, output_tokens = _extract_token_counts(usage_metadata, response.llm_output)
 
         # Fold tool calls into the response text so the payload keeps its
         # original shape ({"response": <str>}). The matching tool results are
@@ -366,6 +371,8 @@ class _LangchainAgentCallback(BaseCallbackHandler):
             parent_run_id,
             output={"response": response_text},
             token_usage=token_usage,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             duration_seconds=_pop_elapsed(self._start_times, run_id),
         )
 
