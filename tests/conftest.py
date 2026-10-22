@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -33,4 +33,18 @@ def active_handler() -> _LangchainAgentCallback:
     handler.trace_id = uuid.uuid4()
     token = _current_callback.set(handler)
     yield handler
+    _current_callback.reset(token)
+
+
+@pytest.fixture
+def post_mock(monkeypatch, mock_http_ok):
+    """Patch the HTTP call made by evaluate_confidence (score 8) and provide an API key.
+
+    Also isolates the active-callback ContextVar, so tests that start a run (which
+    registers the handler there) cannot leak it into other tests.
+    """
+    monkeypatch.setenv("TRELLAR_API_KEY", "test-key")
+    token = _current_callback.set(None)
+    with patch("trellar.agent_loop.requests.post", return_value=mock_http_ok) as post:
+        yield post
     _current_callback.reset(token)

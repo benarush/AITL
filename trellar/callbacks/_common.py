@@ -5,9 +5,38 @@ import functools
 import hashlib
 import json
 import logging
+import time
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def mark_start(start_times: dict[str, float], run_id: Any) -> None:
+    """Record a monotonic start timestamp for *run_id*."""
+    start_times[str(run_id)] = time.perf_counter()
+
+
+def pop_elapsed(start_times: dict[str, float], run_id: Any) -> Optional[float]:
+    """Return seconds elapsed since :func:`mark_start` for *run_id* (3 decimals).
+
+    Removes the entry so nothing leaks; returns ``None`` if no start was recorded.
+    """
+    started = start_times.pop(str(run_id), None)
+    if started is None:
+        return None
+    return round(time.perf_counter() - started, 3)
+
+
+def now() -> float:
+    """Monotonic timestamp, to be kept and later passed to :func:`elapsed_since`."""
+    return time.perf_counter()
+
+
+def elapsed_since(started: Optional[float]) -> Optional[float]:
+    """Seconds (3 decimals) since *started*; ``None`` if there was no start."""
+    if started is None:
+        return None
+    return round(time.perf_counter() - started, 3)
 
 
 def guarded(fn: Callable[..., None]) -> Callable[..., None]:
