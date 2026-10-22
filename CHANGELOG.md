@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-23
+
+### Added
+- LangChain and Strands: model/tool events now carry `duration_seconds` (wall time of
+  the call, 3 decimals) and model events carry `input_tokens` / `output_tokens`
+  (`None` if the provider reported none).
+- The payload sent to the back-end now includes a top-level `total_duration_seconds`
+  (time since the root run started; "so far" for a manual mid-run evaluation).
+
 ## [0.7.1] - 2026-10-18
 
 ### Fixed
@@ -67,7 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - Strands agents support (`add_strands_support`).
 
-[Unreleased]: https://github.com/benarush/AITL/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/benarush/AITL/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/benarush/AITL/compare/v0.7.1...v0.8.0
+[0.7.1]: https://github.com/benarush/AITL/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/benarush/AITL/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/benarush/AITL/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/benarush/AITL/compare/v0.5.0...v0.6.0
