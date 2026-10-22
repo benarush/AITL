@@ -56,7 +56,7 @@ def test_langchain_tool_duration(handler, clock):
 
     assert "duration_seconds" not in _event(handler, "on_tool_start", run_id)
     assert _event(handler, "on_tool_end", run_id)["duration_seconds"] == 2.5
-    assert handler._start_times == {}  # nothing left behind
+    assert len(handler._start_times) == 1  # only the still-open root run is left
 
 
 def test_langchain_model_duration_on_success_and_error(handler, clock):
@@ -92,7 +92,7 @@ def test_langchain_overlapping_calls_get_independent_durations(handler, clock):
     assert _event(handler, "on_tool_end", tool_b)["duration_seconds"] == 2
     assert _event(handler, "on_llm_end", model)["duration_seconds"] == 5
     assert _event(handler, "on_tool_end", tool_a)["duration_seconds"] == 10
-    assert handler._start_times == {}
+    assert len(handler._start_times) == 1  # only the still-open root run is left
 
 
 def test_strands_model_and_tool_duration():
@@ -124,4 +124,83 @@ def test_strands_model_and_tool_duration():
             assert isinstance(e["duration_seconds"], float) and e["duration_seconds"] >= 0
     for name in ("on_chat_model_start", "on_tool_start"):
         assert all("duration_seconds" not in e for e in events_of(trellar_agent, name))
+    assert trellar_agent._start_times == {}
+
+
+# ---------------------------------------------------------------------------
+# total_duration_seconds: only on the event that ends the root run
+# ---------------------------------------------------------------------------
+
+def test_langchain_graph_total_duration_only_on_root_end(clock):
+    cb = _LangchainAgentCallback(agent_name="test-agent")
+    root, node, model, tool = (uuid.uuid4() for _ in range(4))
+
+    cb.on_chain_start({"name": "graph"}, {"messages": []}, run_id=root)
+    clock.advance(1)
+    cb.on_chain_start({"name": "node"}, {"messages": []}, run_id=node, parent_run_id=root)
+    cb.on_chat_model_start({"name": "gpt"}, [[HumanMessage(content="hi")]], run_id=model, parent_run_id=node)
+    clock.advance(2)
+    cb.on_llm_end(make_llm_result(message=make_ai_message("ok")), run_id=model, parent_run_id=node)
+    cb.on_tool_start({"name": "search"}, "q", run_id=tool, parent_run_id=node)
+    clock.advance(3)
+    cb.on_tool_end("out", run_id=tool, parent_run_id=node)
+    cb.on_chain_end({"messages": []}, run_id=node, parent_run_id=root)
+    clock.advance(4)
+    cb.on_chain_end({"messages": []}, run_id=root)
+
+    assert _event(cb, "on_chain_end", root)["total_duration_seconds"] == 10
+    for name, run_id in (("on_chain_end", node), ("on_llm_end", model), ("on_tool_end", tool)):
+        assert "total_duration_seconds" not in _event(cb, name, run_id)
+
+
+def test_langchain_failed_root_run_still_gets_total_duration(clock):
+    cb = _LangchainAgentCallback(agent_name="test-agent")
+    root = uuid.uuid4()
+    cb.on_chain_start({"name": "graph"}, {"messages": []}, run_id=root)
+    clock.advance(1.5)
+    cb.on_chain_error(RuntimeError("boom"), run_id=root)
+
+    assert _event(cb, "on_chain_error", root)["total_duration_seconds"] == 1.5
+
+
+def test_langchain_single_llm_call_total_equals_duration(clock):
+    from trellar.callbacks.langchain.single_langchain_callback import _LangchainSingleCallCallback
+
+    cb = _LangchainSingleCallCallback(agent_name="test-agent")
+    run_id = uuid.uuid4()
+    cb.on_chat_model_start({"name": "gpt"}, [[HumanMessage(content="hi")]], run_id=run_id)
+    clock.advance(1.5)
+    cb.on_llm_end(make_llm_result(message=make_ai_message("ok")), run_id=run_id)
+
+    event = _event(cb, "on_llm_end", run_id)
+    assert event["duration_seconds"] == 1.5
+    assert event["total_duration_seconds"] == 1.5
+
+
+def test_strands_total_duration_only_on_root_end():
+    pytest.importorskip("strands")
+    from strands import Agent, tool
+
+    from trellar import trellar_strands_agent
+    from tests.strands_factories import FakeModel, events_of, text_turn, tool_turn
+
+    @tool
+    def add(a: int, b: int) -> int:
+        """Add two numbers."""
+        return a + b
+
+    trellar_agent = trellar_strands_agent("t")
+    Agent(
+        name="calc",
+        model=FakeModel([tool_turn("add", {"a": 1, "b": 2}), text_turn("3")]),
+        tools=[add],
+        hooks=[trellar_agent],
+        callback_handler=None,
+    )("1+2?")
+
+    (root_end,) = events_of(trellar_agent, "on_chain_end")
+    step_durations = [e["duration_seconds"] for e in trellar_agent.events if "duration_seconds" in e]
+    assert root_end["total_duration_seconds"] >= max(step_durations)
+    others = [e for e in trellar_agent.events if e is not root_end]
+    assert all("total_duration_seconds" not in e for e in others)
     assert trellar_agent._start_times == {}

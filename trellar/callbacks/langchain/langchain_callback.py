@@ -47,6 +47,9 @@ class _LangchainAgentCallback(BaseCallbackHandler):
     * ``duration_seconds`` – wall time (seconds, 3 decimals) the model/tool call
       took, on ``on_llm_end`` / ``on_llm_error`` / ``on_tool_end`` /
       ``on_tool_error`` events.
+    * ``total_duration_seconds`` – wall time of the whole run, only on the event that
+      ends the root run (``on_chain_end`` / ``on_chain_error``, or ``on_llm_end`` /
+      ``on_llm_error`` for a bare single LLM call).
     """
 
     # Maps the LangChain message `type` attribute to a human-readable prefix.
@@ -192,6 +195,11 @@ class _LangchainAgentCallback(BaseCallbackHandler):
         node_type: str,
     ) -> None:
         self._run_registry[str(run_id)] = {"name": name, "type": node_type}
+
+    @staticmethod
+    def _root_total(parent_run_id: Optional[uuid.UUID], seconds: Optional[float]) -> dict[str, Any]:
+        """``total_duration_seconds`` extra, only for the event that ends the root run."""
+        return {"total_duration_seconds": seconds} if parent_run_id is None else {}
 
     def _record(
         self,
@@ -352,6 +360,7 @@ class _LangchainAgentCallback(BaseCallbackHandler):
             response.llm_output or {}
         ).get("usage")
         input_tokens, output_tokens = _extract_token_counts(usage_metadata, response.llm_output)
+        duration = _pop_elapsed(self._start_times, run_id)
 
         # Fold tool calls into the response text so the payload keeps its
         # original shape ({"response": <str>}). The matching tool results are
@@ -373,7 +382,8 @@ class _LangchainAgentCallback(BaseCallbackHandler):
             token_usage=token_usage,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            duration_seconds=_pop_elapsed(self._start_times, run_id),
+            duration_seconds=duration,
+            **self._root_total(parent_run_id, duration),
         )
 
         if tool_calls:
@@ -397,12 +407,14 @@ class _LangchainAgentCallback(BaseCallbackHandler):
         parent_run_id: Optional[uuid.UUID] = None,
         **kwargs: Any,
     ) -> None:
+        duration = _pop_elapsed(self._start_times, run_id)
         self._record(
             "on_llm_error",
             run_id,
             parent_run_id,
             error=str(error),
-            duration_seconds=_pop_elapsed(self._start_times, run_id),
+            duration_seconds=duration,
+            **self._root_total(parent_run_id, duration),
         )
 
     # ------------------------------------------------------------------
@@ -544,6 +556,7 @@ class _LangchainAgentCallback(BaseCallbackHandler):
             self._step = 0
             self._run_registry = {}
             self._start_times = {}
+            _mark_start(self._start_times, run_id)  # for total_duration_seconds
             self._pending_llm_tool_calls = []
             self.available_tools = {}
             self._evaluated = False
@@ -593,7 +606,13 @@ class _LangchainAgentCallback(BaseCallbackHandler):
         # pydantic model returned by a `with_structured_output` sub-chain).
         if isinstance(outputs, dict) and "messages" in outputs:
             outputs = {**outputs, "messages": self._serialize_messages(outputs["messages"])}
-        self._record("on_chain_end", run_id, parent_run_id, outputs=self._to_jsonable(outputs))
+        self._record(
+            "on_chain_end",
+            run_id,
+            parent_run_id,
+            outputs=self._to_jsonable(outputs),
+            **self._root_total(parent_run_id, _pop_elapsed(self._start_times, run_id)),
+        )
         if parent_run_id is None:
             # Root run ending — the whole graph flow has reached its end.
             self._maybe_auto_evaluate()
@@ -628,7 +647,13 @@ class _LangchainAgentCallback(BaseCallbackHandler):
         parent_run_id: Optional[uuid.UUID] = None,
         **kwargs: Any,
     ) -> None:
-        self._record("on_chain_error", run_id, parent_run_id, error=str(error))
+        self._record(
+            "on_chain_error",
+            run_id,
+            parent_run_id,
+            error=str(error),
+            **self._root_total(parent_run_id, _pop_elapsed(self._start_times, run_id)),
+        )
         if parent_run_id is None:
             # Root run failing — on_chain_end will never fire for this run_id
             # (they are mutually exclusive), so release the slot here too.

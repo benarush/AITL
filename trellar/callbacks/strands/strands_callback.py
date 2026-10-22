@@ -150,6 +150,7 @@ class _StrandsAgentCallback(HookProvider):
         if self._root_run_id is None:
             # First run: this is the root. Reset state and become the active Trellar agent.
             self._reset(run_id)
+            mark_start(self._start_times, run_id)  # for total_duration_seconds
             parent = None
             _current_callback.set(self)
         else:
@@ -161,9 +162,12 @@ class _StrandsAgentCallback(HookProvider):
 
     def _end_chain(self, run_id: str, name: Optional[str], outputs: Any) -> None:
         parent = self._parents.get(run_id)
-        self._record("on_chain_end", run_id, parent, name, "chain", outputs=outputs)
+        is_root = run_id == self._root_run_id
+        # Only the event that ends the root run carries the whole-run duration.
+        total = {"total_duration_seconds": pop_elapsed(self._start_times, run_id)} if is_root else {}
+        self._record("on_chain_end", run_id, parent, name, "chain", outputs=outputs, **total)
         _current_run.set(parent)
-        if run_id == self._root_run_id:
+        if is_root:
             self._finish_root()
 
     def _finish_root(self) -> None:
