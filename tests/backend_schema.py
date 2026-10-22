@@ -111,4 +111,5 @@ class AgentLoopRequest(BaseModel):
     trace_id: str
     agent_name: Optional[str] = None
     observability_call: bool = False
+    total_duration_seconds: Optional[float] = None
     available_tools: list[AvailableTools] = Field(default_factory=list)

@@ -10,6 +10,7 @@ import uuid
 import pytest
 from langchain_core.messages import HumanMessage
 
+from trellar import ObservabilityMode, evaluate_confidence
 from trellar.callbacks import _common
 from trellar.callbacks.langchain.langchain_callback import _LangchainAgentCallback
 
@@ -56,7 +57,7 @@ def test_langchain_tool_duration(handler, clock):
 
     assert "duration_seconds" not in _event(handler, "on_tool_start", run_id)
     assert _event(handler, "on_tool_end", run_id)["duration_seconds"] == 2.5
-    assert len(handler._start_times) == 1  # only the still-open root run is left
+    assert handler._start_times == {}  # nothing left behind
 
 
 def test_langchain_model_duration_on_success_and_error(handler, clock):
@@ -92,7 +93,7 @@ def test_langchain_overlapping_calls_get_independent_durations(handler, clock):
     assert _event(handler, "on_tool_end", tool_b)["duration_seconds"] == 2
     assert _event(handler, "on_llm_end", model)["duration_seconds"] == 5
     assert _event(handler, "on_tool_end", tool_a)["duration_seconds"] == 10
-    assert len(handler._start_times) == 1  # only the still-open root run is left
+    assert handler._start_times == {}  # nothing left behind
 
 
 def test_strands_model_and_tool_duration():
@@ -128,11 +129,15 @@ def test_strands_model_and_tool_duration():
 
 
 # ---------------------------------------------------------------------------
-# total_duration_seconds: only on the event that ends the root run
+# total_duration_seconds: top level of the payload, not inside the events
 # ---------------------------------------------------------------------------
 
-def test_langchain_graph_total_duration_only_on_root_end(clock):
-    cb = _LangchainAgentCallback(agent_name="test-agent")
+def _sent_payload(post_mock) -> dict:
+    return post_mock.call_args.kwargs["json"]
+
+
+def test_langchain_payload_total_is_full_run_when_auto_evaluated(clock, post_mock):
+    cb = _LangchainAgentCallback(agent_name="test-agent", observability_mode=ObservabilityMode.ALWAYS)
     root, node, model, tool = (uuid.uuid4() for _ in range(4))
 
     cb.on_chain_start({"name": "graph"}, {"messages": []}, run_id=root)
@@ -146,50 +151,49 @@ def test_langchain_graph_total_duration_only_on_root_end(clock):
     cb.on_tool_end("out", run_id=tool, parent_run_id=node)
     cb.on_chain_end({"messages": []}, run_id=node, parent_run_id=root)
     clock.advance(4)
-    cb.on_chain_end({"messages": []}, run_id=root)
+    cb.on_chain_end({"messages": []}, run_id=root)  # root end triggers the auto-evaluate
 
-    assert _event(cb, "on_chain_end", root)["total_duration_seconds"] == 10
-    for name, run_id in (("on_chain_end", node), ("on_llm_end", model), ("on_tool_end", tool)):
-        assert "total_duration_seconds" not in _event(cb, name, run_id)
+    payload = _sent_payload(post_mock)
+    assert payload["total_duration_seconds"] == 10
+    assert all("total_duration_seconds" not in e for e in payload["context"])
 
 
-def test_langchain_failed_root_run_still_gets_total_duration(clock):
+def test_langchain_payload_total_is_elapsed_so_far_for_manual_evaluate(clock, post_mock):
     cb = _LangchainAgentCallback(agent_name="test-agent")
-    root = uuid.uuid4()
-    cb.on_chain_start({"name": "graph"}, {"messages": []}, run_id=root)
-    clock.advance(1.5)
-    cb.on_chain_error(RuntimeError("boom"), run_id=root)
+    cb.on_chain_start({"name": "graph"}, {"messages": []}, run_id=uuid.uuid4())
+    clock.advance(3)
+    evaluate_confidence()  # a gate node calling it while the run is still open
 
-    assert _event(cb, "on_chain_error", root)["total_duration_seconds"] == 1.5
+    assert _sent_payload(post_mock)["total_duration_seconds"] == 3
 
 
-def test_langchain_single_llm_call_total_equals_duration(clock):
+def test_langchain_single_llm_call_payload_total_equals_call_duration(clock, post_mock):
     from trellar.callbacks.langchain.single_langchain_callback import _LangchainSingleCallCallback
 
-    cb = _LangchainSingleCallCallback(agent_name="test-agent")
+    cb = _LangchainSingleCallCallback(agent_name="test-agent", observability_mode=ObservabilityMode.ALWAYS)
     run_id = uuid.uuid4()
     cb.on_chat_model_start({"name": "gpt"}, [[HumanMessage(content="hi")]], run_id=run_id)
     clock.advance(1.5)
     cb.on_llm_end(make_llm_result(message=make_ai_message("ok")), run_id=run_id)
 
-    event = _event(cb, "on_llm_end", run_id)
-    assert event["duration_seconds"] == 1.5
-    assert event["total_duration_seconds"] == 1.5
+    payload = _sent_payload(post_mock)
+    assert payload["total_duration_seconds"] == 1.5
+    assert payload["context"][-1]["duration_seconds"] == 1.5
 
 
-def test_strands_total_duration_only_on_root_end():
+def test_strands_payload_total_covers_the_agent_run(post_mock):
     pytest.importorskip("strands")
     from strands import Agent, tool
 
     from trellar import trellar_strands_agent
-    from tests.strands_factories import FakeModel, events_of, text_turn, tool_turn
+    from tests.strands_factories import FakeModel, text_turn, tool_turn
 
     @tool
     def add(a: int, b: int) -> int:
         """Add two numbers."""
         return a + b
 
-    trellar_agent = trellar_strands_agent("t")
+    trellar_agent = trellar_strands_agent("t", ObservabilityMode.ALWAYS)
     Agent(
         name="calc",
         model=FakeModel([tool_turn("add", {"a": 1, "b": 2}), text_turn("3")]),
@@ -198,9 +202,7 @@ def test_strands_total_duration_only_on_root_end():
         callback_handler=None,
     )("1+2?")
 
-    (root_end,) = events_of(trellar_agent, "on_chain_end")
-    step_durations = [e["duration_seconds"] for e in trellar_agent.events if "duration_seconds" in e]
-    assert root_end["total_duration_seconds"] >= max(step_durations)
-    others = [e for e in trellar_agent.events if e is not root_end]
-    assert all("total_duration_seconds" not in e for e in others)
-    assert trellar_agent._start_times == {}
+    payload = _sent_payload(post_mock)
+    step_durations = [e["duration_seconds"] for e in payload["context"] if "duration_seconds" in e]
+    assert payload["total_duration_seconds"] >= max(step_durations)
+    assert all("total_duration_seconds" not in e for e in payload["context"])

@@ -6,6 +6,7 @@ from typing import Any, Optional, TYPE_CHECKING
 
 from ..._context import _current_callback
 from ...agent_loop import ObservabilityMode
+from .._common import now as _now
 from .langchain_callback import _LangchainAgentCallback
 
 if TYPE_CHECKING:
@@ -60,6 +61,7 @@ class _LangchainSingleCallCallback(_LangchainAgentCallback):
         self.events = []
         self._step = 0
         self._run_registry = {}
+        self._root_started = _now()
         self._pending_llm_tool_calls = []
         self.available_tools = {}
         self._evaluated = False

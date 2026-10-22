@@ -37,9 +37,11 @@ from ...agent_loop import ObservabilityMode
 from .._common import (
     build_context,
     compact_json,
+    elapsed_since,
     guarded,
     hash_tools,
     mark_start,
+    now,
     pop_elapsed,
     to_jsonable,
 )
@@ -108,6 +110,7 @@ class _StrandsAgentCallback(HookProvider):
         self._root_run_id = root_run_id
         self._parents: dict[str, Optional[str]] = {}  # chain/tool run_id -> parent run_id
         self._start_times: dict[str, float] = {}  # model/tool run_id -> perf_counter() at start
+        self._root_started: Optional[float] = None  # when the root run started (payload total)
         self._agent_runs: dict[int, str] = {}  # id(agent) -> open invocation run_id
         self._model_runs: dict[int, str] = {}  # id(agent) -> open model-call run_id
         self._tool_runs: dict[str, str] = {}  # toolUseId -> open tool run_id
@@ -150,7 +153,7 @@ class _StrandsAgentCallback(HookProvider):
         if self._root_run_id is None:
             # First run: this is the root. Reset state and become the active Trellar agent.
             self._reset(run_id)
-            mark_start(self._start_times, run_id)  # for total_duration_seconds
+            self._root_started = now()
             parent = None
             _current_callback.set(self)
         else:
@@ -162,13 +165,14 @@ class _StrandsAgentCallback(HookProvider):
 
     def _end_chain(self, run_id: str, name: Optional[str], outputs: Any) -> None:
         parent = self._parents.get(run_id)
-        is_root = run_id == self._root_run_id
-        # Only the event that ends the root run carries the whole-run duration.
-        total = {"total_duration_seconds": pop_elapsed(self._start_times, run_id)} if is_root else {}
-        self._record("on_chain_end", run_id, parent, name, "chain", outputs=outputs, **total)
+        self._record("on_chain_end", run_id, parent, name, "chain", outputs=outputs)
         _current_run.set(parent)
-        if is_root:
+        if run_id == self._root_run_id:
             self._finish_root()
+
+    def total_duration_seconds(self) -> Optional[float]:
+        """Seconds since the root run started (``None`` if none has started)."""
+        return elapsed_since(self._root_started)
 
     def _finish_root(self) -> None:
         self._maybe_auto_evaluate()

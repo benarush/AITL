@@ -292,6 +292,9 @@ def evaluate_confidence(
         "agent_name": callback.agent_name,
         "observability_call": _observability_call,
         "single_call": getattr(callback, "is_single_call", False),
+        # Wall time from the root run's start until now: the full run when
+        # auto-evaluated at the end, "so far" for a manual mid-run call.
+        "total_duration_seconds": callback.total_duration_seconds(),
         # One entry per distinct toolset bound during this run, keyed by a
         # content hash (not the model name) so the backend can correlate it
         # back to the exact SubAgent that declared it — see

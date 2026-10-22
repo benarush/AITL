@@ -27,6 +27,18 @@ def pop_elapsed(start_times: dict[str, float], run_id: Any) -> Optional[float]:
     return round(time.perf_counter() - started, 3)
 
 
+def now() -> float:
+    """Monotonic timestamp, to be kept and later passed to :func:`elapsed_since`."""
+    return time.perf_counter()
+
+
+def elapsed_since(started: Optional[float]) -> Optional[float]:
+    """Seconds (3 decimals) since *started*; ``None`` if there was no start."""
+    if started is None:
+        return None
+    return round(time.perf_counter() - started, 3)
+
+
 def guarded(fn: Callable[..., None]) -> Callable[..., None]:
     """Wrap a framework hook so it can never raise into the host application.
 
