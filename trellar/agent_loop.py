@@ -11,6 +11,7 @@ import requests
 
 from . import settings
 from ._context import _current_callback
+from ._tags import Tags, check_tags
 
 if TYPE_CHECKING:
     from .callbacks.langchain.langchain_callback import _LangchainAgentCallback
@@ -62,6 +63,7 @@ class NetworkHaltedError(Exception):
 def trellar_langchain_agent(
     agent_name: str,
     observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+    tags: Optional[Tags] = None,
 ) -> "_LangchainAgentCallback":
     """Create a callback handler that identifies this graph to the Trellar backend.
 
@@ -91,17 +93,26 @@ def trellar_langchain_agent(
             auto-triggered when the graph run finishes. See
             :class:`ObservabilityMode`. Defaults to ``ObservabilityMode.NONE``
             (no auto-trigger, current behavior).
+        tags: Optional flat dict of labels attached to every decision record this
+            agent produces, e.g. ``{"customer_id": 5, "topic": "billing"}``.
+            Every value is converted with ``str()`` (``bool`` becomes ``"true"`` /
+            ``"false"``), so pass values whose ``str()`` is the form you want stored.
+            At most 20 tags; keys 1-64 chars of ``A-Za-z0-9_.-``, values up to 200 chars.
+            Per-call tags can be added in :func:`evaluate_confidence`.
 
     Returns:
         An internal callback handler bound to the given agent name.
     """
     from .callbacks.langchain.langchain_callback import _LangchainAgentCallback
-    return _LangchainAgentCallback(agent_name=agent_name, observability_mode=observability_mode)
+    return _LangchainAgentCallback(
+        agent_name=agent_name, observability_mode=observability_mode, tags=tags
+    )
 
 
 def trellar_langchain_single_call(
     agent_name: str,
     observability_mode: ObservabilityMode = ObservabilityMode.ALWAYS,
+    tags: Optional[Tags] = None,
 ) -> "_LangchainSingleCallCallback":
     """Create a callback handler for a single bare LLM call (no LangGraph/chain wrapper).
 
@@ -126,6 +137,8 @@ def trellar_langchain_single_call(
             auto-triggered when the LLM call finishes. See
             :class:`ObservabilityMode`. Defaults to ``ObservabilityMode.ALWAYS``
             (pass ``NONE`` to record without evaluating).
+        tags: Optional flat dict of labels for the decision record. See
+            :func:`trellar_langchain_agent`.
 
     Returns:
         An internal callback handler bound to the given agent name. Exposes
@@ -133,12 +146,15 @@ def trellar_langchain_single_call(
         auto-triggered evaluation.
     """
     from .callbacks.langchain.single_langchain_callback import _LangchainSingleCallCallback
-    return _LangchainSingleCallCallback(agent_name=agent_name, observability_mode=observability_mode)
+    return _LangchainSingleCallCallback(
+        agent_name=agent_name, observability_mode=observability_mode, tags=tags
+    )
 
 
 def trellar_strands_agent(
     agent_name: str,
     observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+    tags: Optional[Tags] = None,
 ) -> "_StrandsAgentCallback":
     """Create a hook provider that identifies a Strands Agents network to Trellar.
 
@@ -160,14 +176,19 @@ def trellar_strands_agent(
     Args:
         agent_name: Unique, stable name for this agent network.
         observability_mode: See :class:`ObservabilityMode`.
+        tags: Optional flat dict of labels for the decision record. See
+            :func:`trellar_langchain_agent`.
     """
     from .callbacks.strands.strands_callback import _StrandsAgentCallback
-    return _StrandsAgentCallback(agent_name=agent_name, observability_mode=observability_mode)
+    return _StrandsAgentCallback(
+        agent_name=agent_name, observability_mode=observability_mode, tags=tags
+    )
 
 
 def trellar_strands_single_call(
     agent_name: str,
     observability_mode: ObservabilityMode = ObservabilityMode.ALWAYS,
+    tags: Optional[Tags] = None,
 ) -> "_StrandsSingleCallCallback":
     """Create a hook provider for one Strands Agent called once (no Graph/Swarm).
 
@@ -189,9 +210,13 @@ def trellar_strands_single_call(
         agent_name: Unique, stable name for this agent.
         observability_mode: See :class:`ObservabilityMode`. Defaults to ``ALWAYS``
             (pass ``NONE`` to record without evaluating).
+        tags: Optional flat dict of labels for the decision record. See
+            :func:`trellar_langchain_agent`.
     """
     from .callbacks.strands.strands_callback import _StrandsSingleCallCallback
-    return _StrandsSingleCallCallback(agent_name=agent_name, observability_mode=observability_mode)
+    return _StrandsSingleCallCallback(
+        agent_name=agent_name, observability_mode=observability_mode, tags=tags
+    )
 
 
 def _deprecated_alias(old_name: str, new_func):
@@ -225,6 +250,7 @@ def evaluate_confidence(
     *,
     api_key: Optional[str] = None,
     timeout: float = 30.0,
+    tags: Optional[Tags] = None,
     _observability_call: bool = False,
 ) -> AgentLoopResult:
     """Call the Trellar backend to get a confidence score.
@@ -246,6 +272,9 @@ def evaluate_confidence(
         api_key:  Bearer token for authentication.
                   Defaults to the ``TRELLAR_API_KEY`` env var.
         timeout:  HTTP request timeout in seconds (default 30).
+        tags:     Optional flat dict of labels for this call, merged on top of the
+                  tags given when the Trellar agent was created (same key: this
+                  call wins). E.g. ``evaluate_confidence(tags={"customer_id": 5})``.
         _observability_call: Internal — set by the Trellar agent's auto-trigger
                   (see ``ObservabilityMode``) to mark the request as
                   automatic rather than a manual call. Not for external use.
@@ -281,6 +310,8 @@ def evaluate_confidence(
             f"{settings.ENV_TRELLAR_API_KEY} environment variable."
         )
 
+    merged_tags = {**(getattr(callback, "tags", None) or {}), **check_tags(tags)}
+
     url = f"{base_url}/agent-gateway/v1/agent-loop"
     headers = {
         "Authorization": f"Bearer {key}",
@@ -303,6 +334,8 @@ def evaluate_confidence(
             {"tools_hash": tools_hash, "tools": tools}
             for tools_hash, tools in callback.available_tools.items()
         ],
+        # Creation-time tags + this call's tags (this call wins on a same key).
+        "tags": merged_tags,
     }
 
     response = requests.post(url, json=payload, headers=headers, timeout=timeout)

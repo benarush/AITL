@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Tags: `trellar_langchain_agent`, `trellar_langchain_single_call`, `trellar_strands_agent`
+  and `trellar_strands_single_call` accept `tags={...}`, and `evaluate_confidence()`
+  accepts `tags={...}` (merged on top; the per-call value wins). The merged flat dict
+  is sent as a top-level `tags` field in the payload.
+
 ## [0.8.0] - 2026-10-23
 
 ### Added

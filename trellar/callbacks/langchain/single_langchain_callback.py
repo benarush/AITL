@@ -5,6 +5,7 @@ import uuid
 from typing import Any, Optional, TYPE_CHECKING
 
 from ..._context import _current_callback
+from ..._tags import Tags
 from ...agent_loop import ObservabilityMode
 from .._common import now as _now
 from .langchain_callback import _LangchainAgentCallback
@@ -43,8 +44,9 @@ class _LangchainSingleCallCallback(_LangchainAgentCallback):
         *,
         agent_name: str,
         observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+        tags: Optional[Tags] = None,
     ) -> None:
-        super().__init__(agent_name=agent_name, observability_mode=observability_mode)
+        super().__init__(agent_name=agent_name, observability_mode=observability_mode, tags=tags)
         # Populated by _auto_evaluate() when observability_mode triggers an
         # automatic evaluate_confidence() call. None until then, or if the
         # caller only ever evaluates manually (observability_mode=NONE).
