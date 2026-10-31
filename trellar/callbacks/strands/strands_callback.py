@@ -33,6 +33,7 @@ from strands.hooks import (
 from strands.tools.mcp.mcp_agent_tool import MCPAgentTool
 
 from ..._context import _current_callback
+from ..._tags import Tags, check_tags
 from ...agent_loop import ObservabilityMode
 from .._common import (
     build_context,
@@ -82,6 +83,7 @@ class _StrandsAgentCallback(HookProvider):
         *,
         agent_name: str,
         observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+        tags: Optional[Tags] = None,
     ) -> None:
         if not agent_name or not agent_name.strip():
             raise ValueError(
@@ -89,6 +91,8 @@ class _StrandsAgentCallback(HookProvider):
                 "Trellar backend. Use a stable, descriptive name such as 'research-agent'."
             )
         self.agent_name = agent_name
+        # Static tags sent with every evaluation of this agent (kept across runs).
+        self.tags: dict[str, str] = check_tags(tags)
         self.observability_mode = ObservabilityMode(observability_mode)
         self._lock = threading.Lock()
         # Registries we already bound to. Not part of _reset: it must outlive a run, and

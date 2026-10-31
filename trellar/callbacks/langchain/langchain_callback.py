@@ -7,6 +7,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 
 from ..._context import _current_callback
+from ..._tags import Tags, check_tags
 from ...agent_loop import ObservabilityMode
 from .._common import (
     build_context,
@@ -145,6 +146,7 @@ class _LangchainAgentCallback(BaseCallbackHandler):
         *,
         agent_name: str,
         observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+        tags: Optional[Tags] = None,
     ) -> None:
         if not agent_name or not agent_name.strip():
             raise ValueError(
@@ -154,6 +156,8 @@ class _LangchainAgentCallback(BaseCallbackHandler):
             )
         super().__init__()
         self.agent_name: str = agent_name
+        # Static tags sent with every evaluation of this agent (kept across runs).
+        self.tags: dict[str, str] = check_tags(tags)
         self.observability_mode: ObservabilityMode = ObservabilityMode(observability_mode)
         self.trace_id: Optional[uuid.UUID] = None
         self.events: list[dict[str, Any]] = []

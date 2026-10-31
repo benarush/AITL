@@ -205,6 +205,7 @@ result = evaluate_confidence()  # api_key read from the env var
 trellar_langchain_agent(
     agent_name: str,
     observability_mode: ObservabilityMode = ObservabilityMode.NONE,
+    tags: Tags | None = None,
 ) -> BaseCallbackHandler
 ```
 
@@ -212,6 +213,7 @@ trellar_langchain_agent(
 |---|---|---|
 | `agent_name` | `str` | Stable, unique name identifying this agent graph (e.g. `"research-agent"`) |
 | `observability_mode` | `ObservabilityMode` | Controls whether `evaluate_confidence()` is auto-triggered when the graph run finishes. Default `ObservabilityMode.NONE` (no auto-trigger). |
+| `tags` | `Tags \| None` | Flat labels attached to every decision record, e.g. `{"customer_id": 5, "topic": "billing"}`. See [Tags](#tags). |
 
 Returns a LangChain callback handler bound to `agent_name`. Pass it to `graph.invoke(..., config={"callbacks": [trellar_agent]})`.
 
@@ -246,6 +248,7 @@ Requests triggered this way are marked in the payload sent to the backend with `
 trellar_langchain_single_call(
     agent_name: str,
     observability_mode: ObservabilityMode = ObservabilityMode.ALWAYS,
+    tags: Tags | None = None,
 ) -> BaseCallbackHandler
 ```
 
@@ -272,6 +275,7 @@ evaluate_confidence(
     *,
     api_key: str | None = None,
     timeout: float = 30.0,
+    tags: Tags | None = None,
 ) -> AgentLoopResult
 ```
 
@@ -279,12 +283,29 @@ evaluate_confidence(
 |---|---|---|
 | `api_key` | `str \| None` | Bearer token. Falls back to `TRELLAR_API_KEY` |
 | `timeout` | `float` | HTTP request timeout in seconds (default `30.0`) |
+| `tags` | `Tags \| None` | Flat labels for this call, merged on top of the tags given at creation (same key: this call wins). See [Tags](#tags). |
 
 `context`, `trace_id`, and `agent_name` are resolved automatically from the active Trellar agent created by `trellar_langchain_agent` — there is no way to pass them manually. Requests always go to `https://api.trellar.io`; callers cannot redirect them.
 
 **Raises:**
 - `ValueError` — if no active Trellar agent is found, its `trace_id` cannot be resolved, or `api_key` is missing
 - `requests.HTTPError` — on non-2xx HTTP responses
+
+### Tags
+
+Tags are flat key/value labels stored on each decision record, so you can later filter and group decisions (by customer, topic, environment, ...).
+
+```python
+trellar_agent = trellar_langchain_agent("support-bot", tags={"env": "prod", "topic": "billing"})
+
+def confidence_gate(state):
+    return evaluate_confidence(tags={"customer_id": state["customer_id"]})
+```
+
+- `Tags` is `Mapping[str, str | int | float | bool]` (a `dict[str, str]` is fine too).
+- Pass static tags when creating the Trellar agent (any of the four `trellar_*` functions) and per-run values to `evaluate_confidence(tags=...)`. Since per-run values such as a customer id change on every run, create the Trellar agent per `graph.invoke()` or pass them to `evaluate_confidence`.
+- Every value is converted with `str()` before it is sent, so pass values whose `str()` is the form you want stored (for a `UUID`, `str(uuid)` is the usual canonical form). The only special case is `bool`, which becomes `"true"` / `"false"`. `5` and `"5"` are the same tag. Keep values flat and meaningful: a list or dict would be stored as its `str()`, which is rarely what you want.
+- At most 20 tags per call; keys are 1-64 characters from `A-Z a-z 0-9 _ . -`; values are 1-200 characters. A request that breaks these limits is rejected by the backend.
 
 ### `AgentLoopResult`
 

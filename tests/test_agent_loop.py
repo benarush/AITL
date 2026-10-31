@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import datetime
+import json
 import uuid
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
 from trellar import settings
-from trellar.agent_loop import AgentLoopResult, evaluate_confidence
+from trellar.agent_loop import (
+    AgentLoopResult,
+    evaluate_confidence,
+    trellar_langchain_agent,
+    trellar_langchain_single_call,
+)
 from trellar._context import _current_callback
 from trellar.callbacks.langchain.single_langchain_callback import _LangchainSingleCallCallback
 
@@ -171,3 +179,92 @@ class TestEvaluateConfidenceResponse:
 
         with pytest.raises(requests.HTTPError):
             evaluate_confidence(api_key="key-123")
+
+
+# ---------------------------------------------------------------------------
+# tags
+# ---------------------------------------------------------------------------
+
+
+class TestTags:
+    @patch("trellar.agent_loop.requests.post")
+    def test_payload_has_empty_tags_by_default(self, mock_post, active_handler):
+        mock_post.return_value = _successful_post()
+
+        evaluate_confidence(api_key="key-123")
+
+        assert mock_post.call_args.kwargs["json"]["tags"] == {}
+
+    @patch("trellar.agent_loop.requests.post")
+    def test_creation_tags_are_sent(self, mock_post):
+        mock_post.return_value = _successful_post()
+        handler = trellar_langchain_agent("tags-test", tags={"env": "prod"})
+        handler.trace_id = uuid.uuid4()
+        token = _current_callback.set(handler)
+        try:
+            evaluate_confidence(api_key="key-123")
+        finally:
+            _current_callback.reset(token)
+
+        assert mock_post.call_args.kwargs["json"]["tags"] == {"env": "prod"}
+
+    @patch("trellar.agent_loop.requests.post")
+    def test_per_call_tags_are_merged_and_win(self, mock_post):
+        mock_post.return_value = _successful_post()
+        handler = trellar_langchain_agent("tags-test", tags={"env": "prod", "topic": "a"})
+        handler.trace_id = uuid.uuid4()
+        token = _current_callback.set(handler)
+        try:
+            evaluate_confidence(api_key="key-123", tags={"topic": "b", "customer_id": 5})
+        finally:
+            _current_callback.reset(token)
+
+        assert mock_post.call_args.kwargs["json"]["tags"] == {"env": "prod", "topic": "b", "customer_id": "5"}
+        assert handler.tags == {"env": "prod", "topic": "a"}  # creation tags are not mutated
+
+    @pytest.mark.parametrize(
+        "factory",
+        [trellar_langchain_agent, trellar_langchain_single_call],
+    )
+    def test_factories_store_tags(self, factory):
+        assert factory("tags-test", tags={"a": 1}).tags == {"a": "1"}
+
+    @pytest.mark.parametrize("bad", ["x", ["a"], {1: "a"}])
+    def test_invalid_tags_shape_is_rejected(self, bad):
+        with pytest.raises(TypeError):
+            trellar_langchain_agent("tags-test", tags=bad)
+
+    @pytest.mark.parametrize(
+        "value, expected",
+        [
+            ("x", "x"),
+            (5, "5"),
+            (1.5, "1.5"),
+            (True, "true"),  # same form the backend stores
+            (False, "false"),
+            (uuid.UUID(int=321), "00000000-0000-0000-0000-000000000141"),
+            (Decimal("1.50"), "1.50"),
+            (datetime.date(2026, 10, 31), "2026-10-31"),
+            (None, "None"),
+        ],
+    )
+    def test_every_value_is_converted_with_str(self, value, expected):
+        tags = trellar_langchain_agent("tags-test", tags={"k": value}).tags
+        assert tags == {"k": expected}
+        json.dumps(tags)  # what requests does with the payload
+
+    @patch("trellar.agent_loop.requests.post")
+    def test_uuid_per_call_tag_is_sent_as_a_string(self, mock_post, active_handler):
+        mock_post.return_value = _successful_post()
+
+        evaluate_confidence(api_key="key-123", tags={"customer": uuid.UUID(int=321)})
+
+        sent = mock_post.call_args.kwargs["json"]
+        assert sent["tags"] == {"customer": "00000000-0000-0000-0000-000000000141"}
+        json.dumps(sent["tags"])
+
+    @patch("trellar.agent_loop.requests.post")
+    def test_invalid_per_call_tags_shape_is_rejected(self, mock_post, active_handler):
+        with pytest.raises(TypeError):
+            evaluate_confidence(api_key="key-123", tags=["a"])
+        mock_post.assert_not_called()

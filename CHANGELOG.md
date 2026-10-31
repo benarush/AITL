@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-01
+
+### Added
+- Tags: `trellar_langchain_agent`, `trellar_langchain_single_call`, `trellar_strands_agent`
+  and `trellar_strands_single_call` accept `tags={...}`, and `evaluate_confidence()`
+  accepts `tags={...}` (merged on top; the per-call value wins). The merged flat dict
+  is sent as a top-level `tags` field in the payload.
+
 ## [0.8.0] - 2026-10-23
 
 ### Added
@@ -76,7 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - Strands agents support (`add_strands_support`).
 
-[Unreleased]: https://github.com/benarush/AITL/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/benarush/AITL/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/benarush/AITL/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/benarush/AITL/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/benarush/AITL/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/benarush/AITL/compare/v0.6.1...v0.7.0
