@@ -1,4 +1,4 @@
-from .agent_utils import _model_name, _openai_tools
+from .agent_utils import _model_name, _openai_tools, _thinking_config
 from .message_utils import _last_user_text, _llm_human_input, _text_of_blocks
 
 __all__ = [
@@ -7,4 +7,5 @@ __all__ = [
     "_model_name",
     "_openai_tools",
     "_text_of_blocks",
+    "_thinking_config",
 ]

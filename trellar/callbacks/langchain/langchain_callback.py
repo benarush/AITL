@@ -18,7 +18,13 @@ from .._common import (
     now as _now,
     pop_elapsed as _pop_elapsed,
 )
-from .utils import _content_to_str, _extract_llm_input, _extract_model_name, _extract_token_counts
+from .utils import (
+    _content_to_str,
+    _extract_llm_input,
+    _extract_model_name,
+    _extract_thinking_config,
+    _extract_token_counts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +284,7 @@ class _LangchainAgentCallback(BaseCallbackHandler):
             run_id,
             parent_run_id,
             model=model,
+            thinking_config=_extract_thinking_config(serialized, kwargs.get("invocation_params")),
             input={"system": None, "human": "\n".join(prompts)},
         )
 
@@ -308,6 +315,7 @@ class _LangchainAgentCallback(BaseCallbackHandler):
             run_id,
             parent_run_id,
             model=model,
+            thinking_config=_extract_thinking_config(serialized, kwargs.get("invocation_params")),
             input=llm_input,
             tools_hash=tools_hash,
         )

@@ -1,5 +1,7 @@
 from typing import Any, Optional
 
+from ...utils import extract_reasoning
+
 
 def _extract_model_name(serialized: dict[str, Any]) -> Optional[str]:
     """
@@ -14,6 +16,28 @@ def _extract_model_name(serialized: dict[str, Any]) -> Optional[str]:
         # Fall back to the class name so we always have something.
         name = serialized.get("name")
     return name
+
+
+def _extract_thinking_config(
+    serialized: Optional[dict[str, Any]],
+    invocation_params: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    """The model's reasoning/thinking settings as configured, or ``None``.
+
+    Reads the constructor config (``serialized["kwargs"]``) and then this call's
+    ``invocation_params`` (which win, e.g. after ``.bind(...)``). The provider is
+    inferred from ``serialized["id"]`` (e.g. ``[..., "ChatAnthropic"]``) and the model
+    name. Never raises; see :func:`extract_reasoning`.
+    """
+    try:
+        serialized = serialized if isinstance(serialized, dict) else {}
+        return extract_reasoning(
+            [serialized.get("kwargs"), invocation_params],
+            provider_hint=serialized.get("id") or serialized.get("name"),
+            model_name=_extract_model_name(serialized),
+        )
+    except Exception:
+        return None
 
 
 def _first_int(source: Any, *keys: str) -> Optional[int]:

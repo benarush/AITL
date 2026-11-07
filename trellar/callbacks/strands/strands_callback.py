@@ -46,7 +46,14 @@ from .._common import (
     pop_elapsed,
     to_jsonable,
 )
-from .utils import _last_user_text, _llm_human_input, _model_name, _openai_tools, _text_of_blocks
+from .utils import (
+    _last_user_text,
+    _llm_human_input,
+    _model_name,
+    _openai_tools,
+    _text_of_blocks,
+    _thinking_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -287,6 +294,7 @@ class _StrandsAgentCallback(HookProvider):
             model,
             "llm",
             model=model,
+            thinking_config=_thinking_config(agent),
             input={"system": agent.system_prompt, "human": _llm_human_input(agent.messages)},
             tools_hash=tools_hash,
         )

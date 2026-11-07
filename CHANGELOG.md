@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- LangChain and Strands: `on_chat_model_start` / `on_llm_start` events now carry
+  `thinking_config`, the model's reasoning/thinking settings exactly as configured
+  (e.g. `{"thinking": {"type": "enabled", "budget_tokens": 2000}}`,
+  `{"reasoning_effort": "high"}`, `{"thinking_budget": 1024}`), or `None` when none are
+  set. Only an allowlist of reasoning keys is read from the model config, so API keys
+  and other settings are never sent. Provider-aware extraction lives in
+  `trellar.callbacks.utils.reasoning_extraction` (one module per provider).
+
 ## [0.8.1] - 2026-11-01
 
 ### Added
