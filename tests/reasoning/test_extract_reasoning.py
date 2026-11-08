@@ -25,6 +25,12 @@ class TestProviders:
 
         assert result == {"thinking_budget": 1024, "include_thoughts": True}
 
+    def test_gemini_level_stored_as_reasoning_effort_by_langchain(self):
+        # langchain-google-genai keeps thinking_level under reasoning_effort in the constructor config.
+        result = extract_reasoning([{"model": "gemini-3-pro-preview", "reasoning_effort": "high"}], "ChatGoogleGenerativeAI")
+
+        assert result == {"reasoning_effort": "high"}
+
     def test_gemini_nested_thinking_config_from_strands_params(self, strands_gemini_config):
         result = extract_reasoning([strands_gemini_config], "strands.models.gemini GeminiModel", "gemini-2.5-flash")
 
