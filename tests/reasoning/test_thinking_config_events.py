@@ -67,7 +67,7 @@ class TestStrandsEvents:
     def _strands(self):
         pytest.importorskip("strands")
 
-    def _run(self, model):
+    def _run(self, model, before_invoke=None):
         from strands import Agent
 
         from tests.strands_factories import events_of, text_turn
@@ -75,7 +75,10 @@ class TestStrandsEvents:
 
         trellar_agent = trellar_strands_agent("t")
         model.turns = [text_turn("hi")]
-        Agent(name="calc", model=model, hooks=[trellar_agent], callback_handler=None)("hello")
+        agent = Agent(name="calc", model=model, hooks=[trellar_agent], callback_handler=None)
+        if before_invoke is not None:
+            before_invoke()
+        agent("hello")
         (event,) = events_of(trellar_agent, "on_chat_model_start")
         return event
 
@@ -99,7 +102,18 @@ class TestStrandsEvents:
         from tests.strands_factories import FakeModel
 
         class Broken(FakeModel):
-            def get_config(self):
-                raise RuntimeError("no config")
+            # Newer strands calls get_config() inside Agent.__init__, so only
+            # start raising once the agent is built (i.e. when the hook reads it).
+            armed = False
 
-        assert self._run(Broken([]))["thinking_config"] is None
+            def get_config(self):
+                if self.armed:
+                    raise RuntimeError("no config")
+                return super().get_config()
+
+        model = Broken([])
+
+        def arm():
+            model.armed = True
+
+        assert self._run(model, before_invoke=arm)["thinking_config"] is None
