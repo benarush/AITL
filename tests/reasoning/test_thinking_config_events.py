@@ -67,7 +67,7 @@ class TestStrandsEvents:
     def _strands(self):
         pytest.importorskip("strands")
 
-    def _run(self, model, before_invoke=None):
+    def _run(self, model):
         from strands import Agent
 
         from tests.strands_factories import events_of, text_turn
@@ -75,10 +75,7 @@ class TestStrandsEvents:
 
         trellar_agent = trellar_strands_agent("t")
         model.turns = [text_turn("hi")]
-        agent = Agent(name="calc", model=model, hooks=[trellar_agent], callback_handler=None)
-        if before_invoke is not None:
-            before_invoke()
-        agent("hello")
+        Agent(name="calc", model=model, hooks=[trellar_agent], callback_handler=None)("hello")
         (event,) = events_of(trellar_agent, "on_chat_model_start")
         return event
 
@@ -99,21 +96,15 @@ class TestStrandsEvents:
         assert self._run(FakeModel([]))["thinking_config"] is None
 
     def test_get_config_raising_gives_none(self):
-        from tests.strands_factories import FakeModel
+        # Unit-level on purpose: strands itself calls model.get_config() in
+        # Agent.__init__ and in an after-invocation hook (newer versions), so a
+        # model that always raises can't run through a real Agent.
+        from types import SimpleNamespace
 
-        class Broken(FakeModel):
-            # Newer strands calls get_config() inside Agent.__init__, so only
-            # start raising once the agent is built (i.e. when the hook reads it).
-            armed = False
+        from trellar.callbacks.strands.utils import _thinking_config
 
+        class Broken:
             def get_config(self):
-                if self.armed:
-                    raise RuntimeError("no config")
-                return super().get_config()
+                raise RuntimeError("no config")
 
-        model = Broken([])
-
-        def arm():
-            model.armed = True
-
-        assert self._run(model, before_invoke=arm)["thinking_config"] is None
+        assert _thinking_config(SimpleNamespace(model=Broken())) is None
