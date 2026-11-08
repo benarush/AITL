@@ -46,12 +46,14 @@ class OnChatModelStart(_Base):
     input: LLMInput
     model: str
     tools_hash: Optional[str] = None
+    thinking_config: Optional[dict[str, Any]] = None
 
 
 class OnLlmStart(_Base):
     event: Literal["on_llm_start"]
     input: LLMInput
     model: Optional[str] = None
+    thinking_config: Optional[dict[str, Any]] = None
 
 
 class OnLlmEnd(_Base):
